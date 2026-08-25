@@ -122,6 +122,16 @@ export default function CreatePostPage() {
   const [caption, setCaption] =
     useState("");
 
+    const [
+  publishToInstagram,
+  setPublishToInstagram,
+] = useState(true);
+
+const [
+  publishToFacebook,
+  setPublishToFacebook,
+] = useState(false);
+
   const [
     publishMode,
     setPublishMode,
@@ -310,9 +320,9 @@ export default function CreatePostPage() {
     );
   }
 
-  async function publishNow(
-    imageUrl: string
-  ) {
+async function publishInstagramNow(
+  imageUrl: string
+) {
     const response =
       await fetch(
         "/api/instagram/publish",
@@ -352,48 +362,101 @@ export default function CreatePostPage() {
     return result;
   }
 
-  async function schedulePost(
-    imageUrl: string,
-    scheduledAt: Date
+  async function publishFacebookNow(
+  imageUrl: string
+) {
+  const response =
+    await fetch(
+      "/api/facebook/publish",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          influencerId,
+          imageUrl,
+          message: caption,
+        }),
+      }
+    );
+
+  const result =
+    await response.json();
+
+  if (
+    !response.ok ||
+    !result.ok
   ) {
-    const response =
-      await fetch(
-        "/api/instagram/schedule",
-        {
-          method:
-            "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body:
-            JSON.stringify({
-              influencerId,
-              imageUrl,
-              caption,
-              scheduledAt:
-                scheduledAt.toISOString(),
-            }),
-        }
-      );
-
-    const result =
-      await response.json();
-
-    if (
-      !response.ok ||
-      !result.ok
-    ) {
-      throw new Error(
+    throw new Error(
+      result?.error
+        ?.error?.message ??
         result?.error ??
-          "Schemaläggningen misslyckades."
-      );
-    }
-
-    return result;
+        "Facebook-publiceringen misslyckades."
+    );
   }
+
+  return result;
+}
+
+  async function schedulePost(
+  imageUrl: string,
+  scheduledAt: Date
+) {
+  const platforms: string[] =
+    [];
+
+  if (publishToInstagram) {
+    platforms.push(
+      "instagram"
+    );
+  }
+
+  if (publishToFacebook) {
+    platforms.push(
+      "facebook"
+    );
+  }
+
+  const response =
+    await fetch(
+      "/api/posts/schedule",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body:
+          JSON.stringify({
+            influencerId,
+            imageUrl,
+            caption,
+            scheduledAt:
+              scheduledAt.toISOString(),
+            platforms,
+          }),
+      }
+    );
+
+  const result =
+    await response.json();
+
+  if (
+    !response.ok ||
+    !result.ok
+  ) {
+    throw new Error(
+      result?.error ??
+        "Schemaläggningen misslyckades."
+    );
+  }
+
+  return result;
+}
 
   function getCustomDateTime() {
     if (
@@ -435,100 +498,175 @@ export default function CreatePostPage() {
     return date;
   }
 
-  async function handleSubmit() {
-    if (!file) {
-      setMessage(
-        "Välj en bild först."
-      );
+ async function handleSubmit() {
+  if (!file) {
+    setMessage(
+      "Välj en bild först."
+    );
 
-      return;
-    }
+    return;
+  }
 
-    try {
-      setLoading(true);
+  if (
+    !publishToInstagram &&
+    !publishToFacebook
+  ) {
+    setMessage(
+      "Välj minst en kanal."
+    );
 
-      setMessage(
-        "Laddar upp bilden..."
-      );
+    return;
+  }
 
-      const imageUrl =
-        await uploadImage();
+  try {
+    setLoading(true);
+
+    setMessage(
+      "Laddar upp bilden..."
+    );
+
+    const imageUrl =
+      await uploadImage();
+
+    /*
+      PUBLICERA NU
+    */
+    if (
+      publishMode ===
+      "now"
+    ) {
+      const platforms:
+        string[] = [];
 
       if (
-        publishMode ===
-        "now"
+        publishToInstagram
       ) {
-        setMessage(
-          "Publicerar på Instagram..."
+        platforms.push(
+          "Instagram"
         );
-
-        const result =
-          await publishNow(
-            imageUrl
-          );
-
-        setMessage(
-          `Publicerat på @${result.username} ✓`
-        );
-
-        setFile(null);
-        setCaption("");
-
-        return;
       }
 
-      let scheduledAt:
-        Date;
-
       if (
-        publishMode ===
-        "recommended"
+        publishToFacebook
       ) {
-        if (
-          !recommendedDate
-        ) {
-          throw new Error(
-            "Ingen rekommenderad tid finns ännu."
-          );
-        }
-
-        scheduledAt =
-          recommendedDate;
-      } else {
-        scheduledAt =
-          getCustomDateTime();
+        platforms.push(
+          "Facebook"
+        );
       }
 
       setMessage(
-        "Schemalägger inlägget..."
+        `Publicerar på ${platforms.join(
+          " + "
+        )}...`
       );
 
-      const result =
-        await schedulePost(
-          imageUrl,
-          scheduledAt
+      if (
+        publishToInstagram
+      ) {
+        await publishInstagramNow(
+          imageUrl
         );
+      }
+
+      if (
+        publishToFacebook
+      ) {
+        await publishFacebookNow(
+          imageUrl
+        );
+      }
 
       setMessage(
-        `Schemalagt för ${formatLocalDateTime(
-          new Date(
-            result.scheduledAt
-          )
+        `Publicerat på ${platforms.join(
+          " + "
         )} ✓`
       );
 
       setFile(null);
       setCaption("");
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Något gick fel."
-      );
-    } finally {
-      setLoading(false);
+
+      return;
     }
+
+    /*
+      SCHEMALÄGG
+    */
+
+    let scheduledAt:
+      Date;
+
+    if (
+      publishMode ===
+      "recommended"
+    ) {
+      if (
+        !recommendedDate
+      ) {
+        throw new Error(
+          "Ingen rekommenderad tid finns ännu."
+        );
+      }
+
+      scheduledAt =
+        recommendedDate;
+    } else {
+      scheduledAt =
+        getCustomDateTime();
+    }
+
+    const platforms:
+      string[] = [];
+
+    if (
+      publishToInstagram
+    ) {
+      platforms.push(
+        "Instagram"
+      );
+    }
+
+    if (
+      publishToFacebook
+    ) {
+      platforms.push(
+        "Facebook"
+      );
+    }
+
+    setMessage(
+      `Schemalägger för ${platforms.join(
+        " + "
+      )}...`
+    );
+
+    const result =
+      await schedulePost(
+        imageUrl,
+        scheduledAt
+      );
+
+    setMessage(
+      `Schemalagt för ${formatLocalDateTime(
+        new Date(
+          result.scheduledAt
+        )
+      )} på ${platforms.join(
+        " + "
+      )} ✓`
+    );
+
+    setFile(null);
+    setCaption("");
+  } catch (error) {
+    setMessage(
+      error instanceof Error
+        ? error.message
+        : "Något gick fel."
+    );
+  } finally {
+    setLoading(false);
   }
+}
 
   const buttonText =
     publishMode ===
@@ -626,6 +764,91 @@ export default function CreatePostPage() {
               className="w-full resize-none rounded-xl border border-zinc-700 bg-zinc-950 p-4 outline-none focus:border-zinc-500"
             />
           </div>
+
+          {/* Kanaler */}
+
+<div>
+  <h2 className="mb-4 text-lg font-semibold">
+    Publicera till
+  </h2>
+
+  <div className="grid gap-3 sm:grid-cols-2">
+
+    {/* Instagram */}
+
+    <label
+      className={`cursor-pointer rounded-xl border p-4 transition ${
+        publishToInstagram
+          ? "border-white bg-zinc-800"
+          : "border-zinc-700 bg-zinc-950"
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          checked={publishToInstagram}
+          disabled={loading}
+          onChange={(event) =>
+            setPublishToInstagram(
+              event.target.checked
+            )
+          }
+        />
+
+        <div>
+          <div className="font-semibold">
+            Instagram
+          </div>
+
+          <div className="mt-1 text-xs text-zinc-500">
+            Feed
+          </div>
+        </div>
+      </div>
+    </label>
+
+    {/* Facebook */}
+
+    <label
+      className={`cursor-pointer rounded-xl border p-4 transition ${
+        publishToFacebook
+          ? "border-white bg-zinc-800"
+          : "border-zinc-700 bg-zinc-950"
+      }`}
+    >
+      <div className="flex items-center gap-3">
+        <input
+          type="checkbox"
+          checked={publishToFacebook}
+          disabled={loading}
+          onChange={(event) =>
+            setPublishToFacebook(
+              event.target.checked
+            )
+          }
+        />
+
+        <div>
+          <div className="font-semibold">
+            Facebook
+          </div>
+
+          <div className="mt-1 text-xs text-zinc-500">
+            Page
+          </div>
+        </div>
+      </div>
+    </label>
+
+  </div>
+
+  {!publishToInstagram &&
+    !publishToFacebook && (
+      <p className="mt-3 text-sm text-amber-400">
+        Välj minst en kanal.
+      </p>
+    )}
+</div>
 
           {/* Publiceringstid */}
 
@@ -839,10 +1062,14 @@ export default function CreatePostPage() {
             onClick={
               handleSubmit
             }
-            disabled={
-              loading ||
-              !file
-            }
+       disabled={
+  loading ||
+  !file ||
+  (
+    !publishToInstagram &&
+    !publishToFacebook
+  )
+}
             className="w-full rounded-xl bg-white px-5 py-3 font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {loading
