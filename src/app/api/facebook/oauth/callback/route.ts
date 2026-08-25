@@ -409,15 +409,6 @@ if (
     ).toISOString();
 }
 
-console.log("META TOKEN EXPIRY DEBUG", {
-  debugExpiresAt:
-    tokenInfo.expires_at ?? null,
-  exchangeExpiresIn:
-    exchangeData.expires_in ?? null,
-  calculatedExpiresAt:
-    expiresAt,
-});
-
     /*
       4.
       Hämta Facebook-användaren.
@@ -720,20 +711,12 @@ console.log("META TOKEN EXPIRY DEBUG", {
       Skicka tillbaka användaren
       till influencerns sida.
     */
-return NextResponse.json({
-  ok: true,
-
-  expiryDebug: {
-    debugExpiresAt:
-      tokenInfo.expires_at ?? null,
-
-    exchangeExpiresIn:
-      exchangeData.expires_in ?? null,
-
-    calculatedExpiresAt:
-      expiresAt,
-  },
-});
+    return NextResponse.redirect(
+      new URL(
+        `/influencers/${influencerId}?facebook_connected=1`,
+        url.origin
+      )
+    );
   } catch (error) {
     return NextResponse.json(
       {

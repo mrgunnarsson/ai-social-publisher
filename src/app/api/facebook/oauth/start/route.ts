@@ -74,16 +74,22 @@ export async function GET(
     "code"
   );
 
-  authUrl.searchParams.set(
-    "scope",
-    [
-      "pages_show_list",
-      "pages_read_engagement",
-      "pages_manage_posts",
-      "business_management",
-      "read_insights",
-    ].join(",")
-  );
+authUrl.searchParams.set(
+  "scope",
+  [
+    "pages_show_list",
+    "pages_read_engagement",
+    "pages_manage_posts",
+    "pages_read_user_content",
+    "business_management",
+    "read_insights",
+  ].join(",")
+);
+
+authUrl.searchParams.set(
+  "auth_type",
+  "rerequest"
+);
 
   return NextResponse.redirect(
     authUrl.toString()

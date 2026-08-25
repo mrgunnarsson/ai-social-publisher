@@ -76,19 +76,19 @@ export async function POST(
       );
     }
 
-    if (
-      post.platform !==
-      "instagram"
-    ) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "Only Instagram posts are supported.",
-        },
-        { status: 400 }
-      );
-    }
+   if (
+  post.platform !== "instagram" &&
+  post.platform !== "multi"
+) {
+  return NextResponse.json(
+    {
+      ok: false,
+      error:
+        "Only Instagram or multi-platform posts are supported.",
+    },
+    { status: 400 }
+  );
+}
 
     /*
       Flytta scheduled_at till nu.
@@ -223,24 +223,52 @@ export async function POST(
     }
 
     if (!result.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            result,
-        },
-        { status: 500 }
-      );
-    }
+  return NextResponse.json(
+    {
+      ok: false,
+      error:
+        result,
+    },
+    { status: 500 }
+  );
+}
 
-    return NextResponse.json({
-      ok: true,
-      postId,
-      mediaId:
-        result.mediaId,
-      publishedAt:
-        result.publishedAt,
-    });
+/*
+  Multi-platform-poster returnerar
+  destinationer i stället för ett
+  enda mediaId.
+*/
+if (
+  post.platform ===
+  "multi"
+) {
+  return NextResponse.json({
+    ok: true,
+    postId,
+    platform:
+      "multi",
+    destinations:
+      result.destinations ??
+      [],
+    remaining:
+      result.remaining ??
+      0,
+  });
+}
+
+/*
+  Legacy Instagram.
+*/
+return NextResponse.json({
+  ok: true,
+  postId,
+  platform:
+    "instagram",
+  mediaId:
+    result.mediaId,
+  publishedAt:
+    result.publishedAt,
+});
   } catch (error) {
     return NextResponse.json(
       {

@@ -320,86 +320,6 @@ const [
     );
   }
 
-async function publishInstagramNow(
-  imageUrl: string
-) {
-    const response =
-      await fetch(
-        "/api/instagram/publish",
-        {
-          method:
-            "POST",
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body:
-            JSON.stringify({
-              influencerId,
-              imageUrl,
-              caption,
-            }),
-        }
-      );
-
-    const result =
-      await response.json();
-
-    if (
-      !response.ok ||
-      !result.ok
-    ) {
-      throw new Error(
-        result?.error
-          ?.error?.message ??
-          result?.error ??
-          "Publiceringen misslyckades."
-      );
-    }
-
-    return result;
-  }
-
-  async function publishFacebookNow(
-  imageUrl: string
-) {
-  const response =
-    await fetch(
-      "/api/facebook/publish",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-        body: JSON.stringify({
-          influencerId,
-          imageUrl,
-          message: caption,
-        }),
-      }
-    );
-
-  const result =
-    await response.json();
-
-  if (
-    !response.ok ||
-    !result.ok
-  ) {
-    throw new Error(
-      result?.error
-        ?.error?.message ??
-        result?.error ??
-        "Facebook-publiceringen misslyckades."
-    );
-  }
-
-  return result;
-}
-
   async function schedulePost(
   imageUrl: string,
   scheduledAt: Date
@@ -528,65 +448,129 @@ async function publishInstagramNow(
     const imageUrl =
       await uploadImage();
 
-    /*
-      PUBLICERA NU
-    */
-    if (
-      publishMode ===
-      "now"
-    ) {
-      const platforms:
-        string[] = [];
+/*
+  PUBLICERA NU
 
-      if (
-        publishToInstagram
-      ) {
-        platforms.push(
-          "Instagram"
-        );
+  Vi skapar först posten genom samma
+  datamodell som schemalagda poster.
+
+  Därefter använder vi publish-now,
+  som i sin tur kör samma
+  publiceringsmotor som Cron.
+*/
+if (
+  publishMode ===
+  "now"
+) {
+  const platformNames:
+    string[] = [];
+
+  if (
+    publishToInstagram
+  ) {
+    platformNames.push(
+      "Instagram"
+    );
+  }
+
+  if (
+    publishToFacebook
+  ) {
+    platformNames.push(
+      "Facebook"
+    );
+  }
+
+  setMessage(
+    `Förbereder publicering på ${platformNames.join(
+      " + "
+    )}...`
+  );
+
+  /*
+    schedule-route kräver en tid.
+
+    Vi lägger posten några sekunder
+    framåt så att den skapas som en
+    vanlig scheduled multi-post.
+  */
+  const scheduledAt =
+    new Date(
+      Date.now() + 5000
+    );
+
+  const scheduledResult =
+    await schedulePost(
+      imageUrl,
+      scheduledAt
+    );
+
+  if (
+    !scheduledResult.postId
+  ) {
+    throw new Error(
+      "Posten skapades men postId saknas."
+    );
+  }
+
+  setMessage(
+    `Publicerar på ${platformNames.join(
+      " + "
+    )}...`
+  );
+
+  /*
+    Flytta posten till nu och kör
+    befintlig run-scheduled-motor.
+  */
+  const publishResponse =
+    await fetch(
+      "/api/posts/publish-now",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body:
+          JSON.stringify({
+            postId:
+              scheduledResult.postId,
+          }),
       }
+    );
 
-      if (
-        publishToFacebook
-      ) {
-        platforms.push(
-          "Facebook"
-        );
-      }
+  const publishResult =
+    await publishResponse.json();
 
-      setMessage(
-        `Publicerar på ${platforms.join(
-          " + "
-        )}...`
-      );
+  if (
+    !publishResponse.ok ||
+    !publishResult.ok
+  ) {
+    throw new Error(
+      typeof publishResult.error ===
+        "string"
+        ? publishResult.error
+        : JSON.stringify(
+            publishResult.error ??
+              publishResult
+          )
+    );
+  }
 
-      if (
-        publishToInstagram
-      ) {
-        await publishInstagramNow(
-          imageUrl
-        );
-      }
+  setMessage(
+    `Publicerat på ${platformNames.join(
+      " + "
+    )} ✓`
+  );
 
-      if (
-        publishToFacebook
-      ) {
-        await publishFacebookNow(
-          imageUrl
-        );
-      }
+  setFile(null);
+  setCaption("");
 
-      setMessage(
-        `Publicerat på ${platforms.join(
-          " + "
-        )} ✓`
-      );
-
-      setFile(null);
-      setCaption("");
-
-      return;
-    }
+  return;
+}
 
     /*
       SCHEMALÄGG
