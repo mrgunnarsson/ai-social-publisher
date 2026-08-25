@@ -1,8 +1,0 @@
-{
-  "crons": [
-    {
-      "path": "/api/instagram/run-scheduled",
-      "schedule": "*/5 * * * *"
-    }
-  ]
-}
