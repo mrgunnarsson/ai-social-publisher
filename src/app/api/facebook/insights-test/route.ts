@@ -36,6 +36,23 @@ type InsightResult = {
   error?: string;
 };
 
+type FacebookInsightPostResult = {
+  id: string;
+  message: string | null;
+  createdAt: string | null;
+  permalink: string | null;
+  reactions: number;
+  comments: number;
+  shares: number;
+  insights: InsightResult[];
+  successfulMetrics: string[];
+
+  failedMetrics: {
+    metric: string;
+    error?: string;
+  }[];
+};
+
 const metricsToTest = [
   "post_impressions",
   "post_impressions_unique",
@@ -70,7 +87,8 @@ async function loadInsightMetric(
       await fetch(
         insightsUrl.toString(),
         {
-          cache: "no-store",
+          cache:
+            "no-store",
         }
       );
 
@@ -80,7 +98,8 @@ async function loadInsightMetric(
     if (!response.ok) {
       return {
         metric,
-        ok: false,
+        ok:
+          false,
 
         error:
           data?.error?.message ??
@@ -89,14 +108,18 @@ async function loadInsightMetric(
     }
 
     const insight =
-      Array.isArray(data.data)
+      Array.isArray(
+        data.data
+      )
         ? data.data[0]
         : null;
 
     if (!insight) {
       return {
         metric,
-        ok: false,
+        ok:
+          false,
+
         error:
           "Meta returned no data for this metric.",
       };
@@ -119,19 +142,22 @@ async function loadInsightMetric(
     const value =
       insight.value ??
       insight.values?.[
-        insight.values.length - 1
+        insight.values.length -
+          1
       ]?.value ??
       null;
 
     return {
       metric,
-      ok: true,
+      ok:
+        true,
       value,
     };
   } catch (error) {
     return {
       metric,
-      ok: false,
+      ok:
+        false,
 
       error:
         error instanceof Error
@@ -146,7 +172,9 @@ export async function GET(
 ) {
   try {
     const url =
-      new URL(request.url);
+      new URL(
+        request.url
+      );
 
     const influencerId =
       url.searchParams.get(
@@ -156,12 +184,15 @@ export async function GET(
     if (!influencerId) {
       return NextResponse.json(
         {
-          ok: false,
+          ok:
+            false,
+
           error:
             "influencerId is required.",
         },
         {
-          status: 400,
+          status:
+            400,
         }
       );
     }
@@ -170,10 +201,15 @@ export async function GET(
       1. Hämta Facebook-kontot.
     */
     const {
-      data: account,
-      error: accountError,
+      data:
+        account,
+
+      error:
+        accountError,
     } = await supabase
-      .from("social_accounts")
+      .from(
+        "social_accounts"
+      )
       .select(
         `
         id,
@@ -195,14 +231,18 @@ export async function GET(
     if (accountError) {
       return NextResponse.json(
         {
-          ok: false,
+          ok:
+            false,
+
           step:
             "load_account",
+
           error:
             accountError.message,
         },
         {
-          status: 500,
+          status:
+            500,
         }
       );
     }
@@ -214,14 +254,18 @@ export async function GET(
     ) {
       return NextResponse.json(
         {
-          ok: false,
+          ok:
+            false,
+
           step:
             "load_account",
+
           error:
             "Facebook account is not connected.",
         },
         {
-          status: 404,
+          status:
+            404,
         }
       );
     }
@@ -265,19 +309,25 @@ export async function GET(
       await fetch(
         postsUrl.toString(),
         {
-          cache: "no-store",
+          cache:
+            "no-store",
         }
       );
 
     const postsData =
       await postsResponse.json();
 
-    if (!postsResponse.ok) {
+    if (
+      !postsResponse.ok
+    ) {
       return NextResponse.json(
         {
-          ok: false,
+          ok:
+            false,
+
           step:
             "load_posts",
+
           error:
             postsData,
         },
@@ -288,7 +338,8 @@ export async function GET(
       );
     }
 
-    const posts: FacebookPost[] =
+    const posts:
+      FacebookPost[] =
       Array.isArray(
         postsData.data
       )
@@ -303,11 +354,17 @@ export async function GET(
       unsupported metric inte förstör
       resten av testet.
     */
-    const results = [];
+    const results:
+      FacebookInsightPostResult[] =
+      [];
 
-    for (const post of posts) {
+    for (
+      const post of
+        posts
+    ) {
       const insights:
-        InsightResult[] = [];
+        InsightResult[] =
+        [];
 
       for (
         const metric of
@@ -402,7 +459,7 @@ export async function GET(
             (post) =>
               post.insights.some(
                 (
-                  insight: InsightResult
+                  insight
                 ) =>
                   insight.metric ===
                     metric &&
@@ -420,7 +477,8 @@ export async function GET(
       );
 
     return NextResponse.json({
-      ok: true,
+      ok:
+        true,
 
       page: {
         id:
@@ -450,7 +508,8 @@ export async function GET(
   } catch (error) {
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
 
         error:
           error instanceof Error
@@ -458,7 +517,8 @@ export async function GET(
             : "Unknown error",
       },
       {
-        status: 500,
+        status:
+          500,
       }
     );
   }

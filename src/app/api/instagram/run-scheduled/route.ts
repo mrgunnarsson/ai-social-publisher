@@ -952,21 +952,18 @@ async function processLegacyInstagramPost(
     );
   }
 
-  return {
-    postId:
-      post.id,
+return {
+  postId:
+    post.id,
 
-    platform:
-      "instagram",
+  platform:
+    "instagram",
 
-    mediaType:
-      post.media_type,
+  ok:
+    true,
 
-    ok:
-      true,
-
-    ...result,
-  };
+  ...result,
+};
 }
 
 /*
