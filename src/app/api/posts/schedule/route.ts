@@ -167,6 +167,40 @@ export async function POST(request: Request) {
       );
     }
 
+    const duplicatePlatforms =
+      uniquePlatforms.filter(
+        (platform) =>
+          accounts.filter(
+            (account) =>
+              account.platform ===
+              platform
+          ).length > 1
+      );
+
+    if (duplicatePlatforms.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          step: "duplicate_accounts",
+          error:
+            `Multiple social accounts configured for: ${duplicatePlatforms.join(
+              ", "
+            )}. Each influencer must have exactly one account per platform.`,
+        },
+        { status: 409 }
+      );
+    }
+
+    const selectedAccounts =
+      uniquePlatforms.map(
+        (platform) =>
+          accounts.find(
+            (account) =>
+              account.platform ===
+              platform
+          )!
+      );
+
     // Skapa själva posten
     const {
       data: post,
@@ -202,7 +236,7 @@ export async function POST(request: Request) {
 
     // Skapa destinationerna
     const destinationRows =
-      accounts.map((account) => ({
+      selectedAccounts.map((account) => ({
         post_id: post.id,
         platform: account.platform,
         social_account_id: account.id,
@@ -236,7 +270,7 @@ export async function POST(request: Request) {
       postId: post.id,
       mediaType: post.media_type,
       scheduledAt,
-      platforms: accounts.map(
+      platforms: selectedAccounts.map(
         (account) => ({
           platform: account.platform,
           username: account.username,

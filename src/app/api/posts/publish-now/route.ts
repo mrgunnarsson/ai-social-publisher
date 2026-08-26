@@ -165,7 +165,9 @@ export async function POST(
           },
 
           body:
-            JSON.stringify({}),
+            JSON.stringify({
+              postId,
+            }),
 
           cache:
             "no-store",

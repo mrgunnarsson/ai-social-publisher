@@ -21,6 +21,46 @@ type Post = {
   sync_count: number | null;
 };
 
+type MetricName =
+  | "likes"
+  | "comments"
+  | "saves"
+  | "shares"
+  | "reach"
+  | "views";
+
+type PostUpdates =
+  Partial<
+    Record<
+      MetricName,
+      number
+    >
+  > & {
+    last_synced_at?: string;
+    sync_count?: number;
+  };
+
+function readMetricValue(
+  value: unknown
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  const metricValue =
+    Number(value);
+
+  return Number.isFinite(
+    metricValue
+  ) && metricValue >= 0
+    ? metricValue
+    : null;
+}
+
 function shouldSyncPost(
   publishedAt: string,
   lastSyncedAt: string | null,
@@ -216,17 +256,38 @@ async function syncAccount(
         continue;
       }
 
+      const postUpdates:
+        PostUpdates = {};
+      const unavailableMetrics:
+        MetricName[] = [];
+
       const likes =
-        Number(
-          mediaData.like_count ??
-            0
+        readMetricValue(
+          mediaData.like_count
         );
 
-      const comments =
-        Number(
-          mediaData.comments_count ??
-            0
+      if (likes === null) {
+        unavailableMetrics.push(
+          "likes"
         );
+      } else {
+        postUpdates.likes =
+          likes;
+      }
+
+      const comments =
+        readMetricValue(
+          mediaData.comments_count
+        );
+
+      if (comments === null) {
+        unavailableMetrics.push(
+          "comments"
+        );
+      } else {
+        postUpdates.comments =
+          comments;
+      }
 
       /*
         Insights
@@ -245,13 +306,22 @@ async function syncAccount(
       const insightsData =
         await insightsResponse.json();
 
-      let reach = 0;
-      let saves = 0;
-      let shares = 0;
-      let views = 0;
+      const returnedInsightMetrics =
+        new Set<MetricName>();
+
+      const requestedInsightMetrics:
+        MetricName[] = [
+          "reach",
+          "saves",
+          "shares",
+          "views",
+        ];
 
       let insightsError:
         unknown = null;
+
+      let insightsSucceeded =
+        false;
 
       if (
         insightsResponse.ok &&
@@ -259,6 +329,9 @@ async function syncAccount(
           insightsData.data
         )
       ) {
+        insightsSucceeded =
+          true;
+
         for (
           const metric of
           insightsData.data
@@ -266,69 +339,138 @@ async function syncAccount(
           const value =
             metric.values?.[0]
               ?.value ??
-            metric.value ??
-            0;
+            metric.value;
+
+          const parsedValue =
+            readMetricValue(
+              value
+            );
 
           switch (
             metric.name
           ) {
             case "reach":
-              reach =
-                Number(value);
+              returnedInsightMetrics.add(
+                "reach"
+              );
+              if (
+                parsedValue !==
+                null
+              ) {
+                postUpdates.reach =
+                  parsedValue;
+              }
               break;
 
             case "saved":
-              saves =
-                Number(value);
+              returnedInsightMetrics.add(
+                "saves"
+              );
+              if (
+                parsedValue !==
+                null
+              ) {
+                postUpdates.saves =
+                  parsedValue;
+              }
               break;
 
             case "shares":
-              shares =
-                Number(value);
+              returnedInsightMetrics.add(
+                "shares"
+              );
+              if (
+                parsedValue !==
+                null
+              ) {
+                postUpdates.shares =
+                  parsedValue;
+              }
               break;
 
             case "views":
-              views =
-                Number(value);
+              returnedInsightMetrics.add(
+                "views"
+              );
+              if (
+                parsedValue !==
+                null
+              ) {
+                postUpdates.views =
+                  parsedValue;
+              }
               break;
           }
         }
       } else {
-        insightsError =
-          insightsData;
+        insightsError = {
+          message:
+            "Instagram insights request failed or returned an invalid response.",
+          details:
+            insightsData,
+        };
       }
 
-      const syncedAt =
-        new Date()
-          .toISOString();
+      for (
+        const metricName of
+          requestedInsightMetrics
+      ) {
+        if (
+          !returnedInsightMetrics.has(
+            metricName
+          ) ||
+          postUpdates[
+            metricName
+          ] === undefined
+        ) {
+          unavailableMetrics.push(
+            metricName
+          );
+        }
+      }
 
-      const nextSyncCount =
-        (post.sync_count ??
-          0) + 1;
+      let syncedAt:
+        string | null = null;
 
-      const {
-        error:
-          updateError,
-      } = await supabase
-        .from("posts")
-        .update({
-          likes,
-          comments,
-          saves,
-          shares,
-          reach,
-          views,
+      let nextSyncCount:
+        number | null = null;
 
-          last_synced_at:
-            syncedAt,
+      if (insightsSucceeded) {
+        syncedAt =
+          new Date()
+            .toISOString();
 
-          sync_count:
-            nextSyncCount,
-        })
-        .eq(
-          "id",
-          post.id
-        );
+        nextSyncCount =
+          (post.sync_count ??
+            0) + 1;
+
+        postUpdates.last_synced_at =
+          syncedAt;
+        postUpdates.sync_count =
+          nextSyncCount;
+      }
+
+      let updateError:
+        { message: string } | null =
+          null;
+
+      if (
+        Object.keys(
+          postUpdates
+        ).length > 0
+      ) {
+        const updateResult =
+          await supabase
+            .from("posts")
+            .update(postUpdates)
+            .eq(
+              "id",
+              post.id
+            );
+
+        updateError =
+          updateResult.error;
+      }
 
       if (updateError) {
         results.push({
@@ -357,14 +499,37 @@ async function syncAccount(
         mediaId,
 
         ok:
-          true,
+          insightsSucceeded,
 
-        likes,
-        comments,
-        saves,
-        shares,
-        reach,
-        views,
+        step:
+          insightsSucceeded
+            ? null
+            : "insights",
+
+        partial:
+          !insightsSucceeded ||
+          unavailableMetrics.length >
+            0,
+
+        updatedMetrics:
+          Object.fromEntries(
+            Object.entries(
+              postUpdates
+            ).filter(
+              ([key]) =>
+                key !==
+                  "last_synced_at" &&
+                key !==
+                  "sync_count"
+            )
+          ),
+
+        unavailableMetrics:
+          [
+            ...new Set(
+              unavailableMetrics
+            ),
+          ],
 
         syncCount:
           nextSyncCount,
@@ -578,8 +743,7 @@ export async function POST(
       accountResults.reduce(
         (
           sum,
-          account:
-            any
+          account
         ) =>
           sum +
           Number(
@@ -593,8 +757,7 @@ export async function POST(
       accountResults.reduce(
         (
           sum,
-          account:
-            any
+          account
         ) =>
           sum +
           Number(

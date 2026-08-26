@@ -174,6 +174,11 @@ const [
 ] = useState(0.7);
 
 const [
+  musicStartTime,
+  setMusicStartTime,
+] = useState(0);
+
+const [
   publishToFacebook,
   setPublishToFacebook,
 ] = useState(false);
@@ -400,6 +405,8 @@ influencerId,
   originalAudioVolume,
 
   musicVolume,
+
+  musicStartTime,
 }),
       }
     );
@@ -731,6 +738,10 @@ setMusicVolume(
   0.7
 );
 
+setMusicStartTime(
+  0
+);
+
   return;
 }
 
@@ -821,6 +832,10 @@ setOriginalAudioVolume(
 );
 setMusicVolume(
   0.7
+);
+
+setMusicStartTime(
+  0
 );
 
   } catch (error) {
@@ -933,6 +948,13 @@ setMusicVolume(
     onSelectedMusicTrackChange={
       setSelectedMusicTrack
     }
+
+    musicStartTime={
+  musicStartTime
+}
+onMusicStartTimeChange={
+  setMusicStartTime
+}
 
     originalAudioVolume={
       originalAudioVolume

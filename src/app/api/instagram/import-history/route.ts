@@ -6,18 +6,60 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+const DEFAULT_MAX_ITEMS = 500;
+const MAX_MAX_ITEMS = 1000;
+const PAGE_SIZE = 100;
+const MAX_PAGE_REQUESTS = 100;
+
+type InstagramMedia = {
+  id?: string;
+  caption?: string;
+  timestamp?: string;
+  media_type?: string;
+  media_url?: string;
+  thumbnail_url?: string;
+  permalink?: string;
+};
+
+type InstagramMediaPage = {
+  data?: InstagramMedia[];
+  paging?: {
+    next?: unknown;
+  };
+  [key: string]: unknown;
+};
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
     const influencerId = body.influencerId;
-    const limit = Number(body.limit ?? 50);
+    const maxItems = Number(
+      body.maxItems ??
+        body.limit ??
+        DEFAULT_MAX_ITEMS
+    );
 
     if (!influencerId) {
       return NextResponse.json(
         {
           ok: false,
           error: "influencerId is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      !Number.isInteger(maxItems) ||
+      maxItems < 1 ||
+      maxItems > MAX_MAX_ITEMS
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            `maxItems must be an integer between 1 and ${MAX_MAX_ITEMS}.`,
         },
         { status: 400 }
       );
@@ -56,36 +98,190 @@ export async function POST(request: Request) {
       socialAccount.access_token;
 
     // 2. Hämta historiska media från Instagram
-    const mediaResponse = await fetch(
-      `https://graph.instagram.com/${instagramUserId}/media` +
-        `?fields=id,caption,timestamp,media_type,media_url,thumbnail_url,permalink` +
-        `&limit=${limit}` +
-        `&access_token=${accessToken}`,
-      {
-        cache: "no-store",
-      }
+    const firstPageUrl = new URL(
+      `https://graph.instagram.com/${instagramUserId}/media`
     );
 
-    const mediaData =
-      await mediaResponse.json();
+    firstPageUrl.searchParams.set(
+      "fields",
+      "id,caption,timestamp,media_type,media_url,thumbnail_url,permalink"
+    );
+    firstPageUrl.searchParams.set(
+      "limit",
+      String(
+        Math.min(
+          PAGE_SIZE,
+          maxItems
+        )
+      )
+    );
+    firstPageUrl.searchParams.set(
+      "access_token",
+      accessToken
+    );
 
-    if (!mediaResponse.ok) {
-      return NextResponse.json(
-        {
-          ok: false,
-          step: "load_instagram_media",
-          error: mediaData,
-        },
-        {
-          status: mediaResponse.status,
-        }
+    const mediaItems:
+      InstagramMedia[] = [];
+    const seenMediaIds =
+      new Set<string>();
+    const visitedPageUrls =
+      new Set<string>();
+    let duplicateMediaItems =
+      0;
+
+    let nextPageUrl:
+      string | null =
+        firstPageUrl.toString();
+    let pagesFetched = 0;
+
+    while (
+      nextPageUrl &&
+      mediaItems.length <
+        maxItems
+    ) {
+      if (
+        pagesFetched >=
+        MAX_PAGE_REQUESTS
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            step:
+              "load_instagram_media",
+            error:
+              "Instagram pagination exceeded the safe page limit.",
+          },
+          { status: 502 }
+        );
+      }
+
+      if (
+        visitedPageUrls.has(
+          nextPageUrl
+        )
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            step:
+              "load_instagram_media",
+            error:
+              "Instagram returned a repeated pagination URL.",
+          },
+          { status: 502 }
+        );
+      }
+
+      const pageUrl:
+        URL =
+        new URL(nextPageUrl);
+
+      if (
+        pageUrl.protocol !==
+          "https:" ||
+        pageUrl.hostname !==
+          "graph.instagram.com"
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            step:
+              "load_instagram_media",
+            error:
+              "Instagram returned an invalid pagination URL.",
+          },
+          { status: 502 }
+        );
+      }
+
+      visitedPageUrls.add(
+        nextPageUrl
       );
+
+      const mediaResponse:
+        Response =
+        await fetch(
+          pageUrl.toString(),
+          {
+            cache: "no-store",
+          }
+        );
+
+      const mediaData:
+        InstagramMediaPage =
+        await mediaResponse.json();
+
+      if (!mediaResponse.ok) {
+        return NextResponse.json(
+          {
+            ok: false,
+            step:
+              "load_instagram_media",
+            page:
+              pagesFetched + 1,
+            error: mediaData,
+          },
+          {
+            status:
+              mediaResponse.status,
+          }
+        );
+      }
+
+      pagesFetched += 1;
+
+      const pageItems =
+        Array.isArray(
+          mediaData.data
+        )
+          ? (mediaData.data as InstagramMedia[])
+          : [];
+
+      for (const media of pageItems) {
+        if (
+          mediaItems.length >=
+          maxItems
+        ) {
+          break;
+        }
+
+        if (!media.id) {
+          mediaItems.push(media);
+          continue;
+        }
+
+        if (
+          seenMediaIds.has(
+            media.id
+          )
+        ) {
+          duplicateMediaItems +=
+            1;
+          continue;
+        }
+
+        seenMediaIds.add(
+          media.id
+        );
+        mediaItems.push(media);
+      }
+
+      const pagingNext:
+        unknown =
+        mediaData?.paging?.next;
+
+      nextPageUrl =
+        typeof pagingNext ===
+          "string" &&
+        pagingNext
+          ? pagingNext
+          : null;
     }
 
-    const mediaItems =
-      Array.isArray(mediaData.data)
-        ? mediaData.data
-        : [];
+    const maxItemsReached =
+      mediaItems.length >=
+        maxItems &&
+      Boolean(nextPageUrl);
 
     const results = [];
 
@@ -94,6 +290,20 @@ export async function POST(request: Request) {
       try {
         const externalPostId =
           media.id;
+
+        if (!externalPostId) {
+          results.push({
+            externalPostId: null,
+            ok: false,
+            status: "failed",
+            step:
+              "validate_media",
+            error:
+              "Instagram media item is missing an id.",
+          });
+
+          continue;
+        }
 
         const caption =
           media.caption ?? "";
@@ -137,6 +347,7 @@ export async function POST(request: Request) {
           results.push({
             externalPostId,
             ok: false,
+            status: "failed",
             step: "check_existing",
             error:
               existingError.message,
@@ -149,7 +360,9 @@ export async function POST(request: Request) {
           results.push({
             externalPostId,
             ok: true,
-            status: "already_exists",
+            status: "skipped",
+            reason:
+              "already_exists",
           });
 
           continue;
@@ -206,6 +419,7 @@ export async function POST(request: Request) {
           results.push({
             externalPostId,
             ok: false,
+            status: "failed",
             step: "insert",
             error:
               insertError.message,
@@ -227,6 +441,7 @@ export async function POST(request: Request) {
           externalPostId:
             media?.id ?? null,
           ok: false,
+          status: "failed",
           error:
             error instanceof Error
               ? error.message
@@ -240,18 +455,29 @@ export async function POST(request: Request) {
       username:
         socialAccount.username,
       found:
-        mediaItems.length,
+        mediaItems.length +
+        duplicateMediaItems,
+      pagesFetched,
+      maxItems,
+      maxItemsReached,
       imported:
         results.filter(
           (item) =>
             item.status ===
             "imported"
         ).length,
-      existing:
+      skipped:
         results.filter(
           (item) =>
             item.status ===
-            "already_exists"
+            "skipped"
+        ).length +
+        duplicateMediaItems,
+      failed:
+        results.filter(
+          (item) =>
+            item.status ===
+            "failed"
         ).length,
       results,
     });

@@ -18,10 +18,11 @@ type MediaType =
 
 type SocialAccount = {
   id: string;
+  influencer_id: string;
+  platform: string;
   username: string;
   external_account_id: string;
   access_token: string;
-  platform?: string;
 };
 
 type ScheduledPost = {
@@ -54,8 +55,9 @@ async function loadSocialAccount(
     .select(
       `
       id,
-      username,
+      influencer_id,
       platform,
+      username,
       external_account_id,
       access_token
       `
@@ -914,6 +916,24 @@ async function processLegacyInstagramPost(
       post.social_account_id
     );
 
+  if (
+    socialAccount.influencer_id !==
+    post.influencer_id
+  ) {
+    throw new Error(
+      "Social account does not belong to the post influencer."
+    );
+  }
+
+  if (
+    socialAccount.platform !==
+    "instagram"
+  ) {
+    throw new Error(
+      "Social account platform does not match legacy Instagram post."
+    );
+  }
+
   const result =
     await publishInstagram(
       post,
@@ -994,10 +1014,6 @@ async function processMultiPost(
     .eq(
       "post_id",
       post.id
-    )
-    .eq(
-      "status",
-      "scheduled"
     );
 
   if (
@@ -1008,19 +1024,134 @@ async function processMultiPost(
     );
   }
 
+  const allDestinations =
+    (destinations ??
+      []) as Destination[];
+
+  if (
+    allDestinations.length ===
+    0
+  ) {
+    throw new Error(
+      "Multi-platform post has no destinations."
+    );
+  }
+
+  const scheduledDestinations =
+    allDestinations.filter(
+      (destination) =>
+        destination.status ===
+        "scheduled"
+    );
+
+  if (
+    scheduledDestinations.length ===
+      0 &&
+    !allDestinations.every(
+      (destination) =>
+        destination.status ===
+        "published"
+    )
+  ) {
+    throw new Error(
+      "Multi-platform post has destinations, but none are scheduled or fully published."
+    );
+  }
+
   const destinationResults =
     [];
 
   for (
     const destination of
-      (destinations ??
-        []) as Destination[]
+      scheduledDestinations
   ) {
+    let destinationClaimed =
+      false;
+
+    let metaPublished =
+      false;
+
     try {
       const socialAccount =
         await loadSocialAccount(
           destination.social_account_id
         );
+
+      if (
+        socialAccount.influencer_id !==
+        post.influencer_id
+      ) {
+        throw new Error(
+          "Destination social account does not belong to the post influencer."
+        );
+      }
+
+      if (
+        socialAccount.platform !==
+        destination.platform
+      ) {
+        throw new Error(
+          "Destination platform does not match the social account platform."
+        );
+      }
+
+      const {
+        data:
+          claimedDestination,
+
+        error:
+          claimError,
+      } = await supabase
+        .from(
+          "post_destinations"
+        )
+        .update({
+          status:
+            "publishing",
+        })
+        .eq(
+          "id",
+          destination.id
+        )
+        .eq(
+          "status",
+          "scheduled"
+        )
+        .select("id")
+        .maybeSingle();
+
+      if (claimError) {
+        throw new Error(
+          `Could not claim destination: ${claimError.message}`
+        );
+      }
+
+      if (!claimedDestination) {
+        destinationResults.push({
+          destinationId:
+            destination.id,
+
+          platform:
+            destination.platform,
+
+          mediaType:
+            post.media_type,
+
+          ok:
+            false,
+
+          skipped:
+            true,
+
+          error:
+            "Destination was already claimed or is no longer scheduled.",
+        });
+
+        continue;
+      }
+
+      destinationClaimed =
+        true;
 
       let result;
 
@@ -1048,7 +1179,13 @@ async function processMultiPost(
         );
       }
 
+      metaPublished =
+        true;
+
       const {
+        data:
+          publishedDestination,
+
         error:
           updateDestinationError,
       } = await supabase
@@ -1071,13 +1208,25 @@ async function processMultiPost(
         .eq(
           "id",
           destination.id
-        );
+        )
+        .eq(
+          "status",
+          "publishing"
+        )
+        .select("id")
+        .maybeSingle();
 
       if (
         updateDestinationError
       ) {
         throw new Error(
           updateDestinationError.message
+        );
+      }
+
+      if (!publishedDestination) {
+        throw new Error(
+          "Published destination could not be finalized because it is no longer in publishing status."
         );
       }
 
@@ -1104,15 +1253,96 @@ async function processMultiPost(
           true,
       });
     } catch (error) {
-      /*
-        Destinationen ligger kvar som
-        scheduled så Cron kan göra
-        ett nytt försök senare.
+      let recoveryStatus =
+        destinationClaimed
+          ? "publishing"
+          : destination.status;
 
-        Detta är särskilt viktigt när
-        en multi-post lyckas på en
-        plattform men inte den andra.
-      */
+      let recoveryError:
+        string | null = null;
+
+      if (
+        destinationClaimed &&
+        !metaPublished
+      ) {
+        const {
+          data:
+            restoredDestination,
+
+          error:
+            restoreError,
+        } = await supabase
+          .from(
+            "post_destinations"
+          )
+          .update({
+            status:
+              "scheduled",
+          })
+          .eq(
+            "id",
+            destination.id
+          )
+          .eq(
+            "status",
+            "publishing"
+          )
+          .select("id")
+          .maybeSingle();
+
+        if (
+          restoreError ||
+          !restoredDestination
+        ) {
+          recoveryError =
+            restoreError?.message ??
+            "Destination is no longer in publishing status.";
+        } else {
+          recoveryStatus =
+            "scheduled";
+        }
+      } else if (
+        destinationClaimed &&
+        metaPublished
+      ) {
+        const {
+          data:
+            uncertainDestination,
+
+          error:
+            uncertainError,
+        } = await supabase
+          .from(
+            "post_destinations"
+          )
+          .update({
+            status:
+              "publish_uncertain",
+          })
+          .eq(
+            "id",
+            destination.id
+          )
+          .eq(
+            "status",
+            "publishing"
+          )
+          .select("id")
+          .maybeSingle();
+
+        if (
+          uncertainError ||
+          !uncertainDestination
+        ) {
+          recoveryError =
+            uncertainError?.message ??
+            "Destination is no longer in publishing status.";
+        } else {
+          recoveryStatus =
+            "publish_uncertain";
+        }
+      }
+
       destinationResults.push({
         destinationId:
           destination.id,
@@ -1126,20 +1356,26 @@ async function processMultiPost(
         ok:
           false,
 
+        status:
+          recoveryStatus,
+
         error:
           error instanceof Error
             ? error.message
             : "Unknown error",
+
+        recoveryError,
       });
     }
   }
 
   /*
-    Finns några destinationer kvar?
+    Finns några opublicerade
+    destinationer kvar?
   */
   const {
-    count:
-      remainingCount,
+    data:
+      finalDestinations,
 
     error:
       remainingError,
@@ -1148,22 +1384,11 @@ async function processMultiPost(
       "post_destinations"
     )
     .select(
-      "id",
-      {
-        count:
-          "exact",
-
-        head:
-          true,
-      }
+      "id, status"
     )
     .eq(
       "post_id",
       post.id
-    )
-    .eq(
-      "status",
-      "scheduled"
     );
 
   if (remainingError) {
@@ -1172,14 +1397,31 @@ async function processMultiPost(
     );
   }
 
+  const remainingCount =
+    (finalDestinations ?? [])
+      .filter(
+        (destination) =>
+          destination.status !==
+          "published"
+      ).length;
+
+  const allDestinationsPublished =
+    (finalDestinations ?? [])
+      .length > 0 &&
+    (finalDestinations ?? [])
+      .every(
+        (destination) =>
+          destination.status ===
+          "published"
+      );
+
   /*
     Endast när ALLA destinationer
     är publicerade sätter vi parent
     till published.
   */
   if (
-    (remainingCount ?? 0) ===
-    0
+    allDestinationsPublished
   ) {
     const publishedAt =
       new Date()
@@ -1231,8 +1473,7 @@ async function processMultiPost(
       destinationResults,
 
     remaining:
-      remainingCount ??
-      0,
+      remainingCount,
   };
 }
 
@@ -1279,6 +1520,86 @@ export async function POST(
       );
     }
 
+    const rawBody =
+      await request.text();
+
+    let postId:
+      string | null = null;
+
+    if (rawBody.trim()) {
+      let body:
+        unknown;
+
+      try {
+        body =
+          JSON.parse(rawBody);
+      } catch {
+        return NextResponse.json(
+          {
+            ok: false,
+
+            error:
+              "Invalid JSON body.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        typeof body !==
+          "object" ||
+        body === null ||
+        Array.isArray(body)
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+
+            error:
+              "Request body must be a JSON object.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      const suppliedPostId =
+        (
+          body as {
+            postId?: unknown;
+          }
+        ).postId;
+
+      if (
+        suppliedPostId !==
+        undefined
+      ) {
+        if (
+          typeof suppliedPostId !==
+            "string" ||
+          !suppliedPostId.trim()
+        ) {
+          return NextResponse.json(
+            {
+              ok: false,
+
+              error:
+                "postId must be a non-empty string.",
+            },
+            {
+              status: 400,
+            }
+          );
+        }
+
+        postId =
+          suppliedPostId.trim();
+      }
+    }
+
     const now =
       new Date()
         .toISOString();
@@ -1288,13 +1609,8 @@ export async function POST(
       media_type hämtas tillsammans
       med resten av posten.
     */
-    const {
-      data:
-        duePosts,
-
-      error:
-        postsError,
-    } = await supabase
+    let postsQuery =
+      supabase
       .from("posts")
       .select(
         `
@@ -1331,6 +1647,22 @@ export async function POST(
         }
       );
 
+    if (postId) {
+      postsQuery =
+        postsQuery.eq(
+          "id",
+          postId
+        );
+    }
+
+    const {
+      data:
+        duePosts,
+
+      error:
+        postsError,
+    } = await postsQuery;
+
     if (
       postsError
     ) {
@@ -1346,6 +1678,112 @@ export async function POST(
         },
         {
           status: 500,
+        }
+      );
+    }
+
+    if (
+      postId &&
+      !duePosts?.length
+    ) {
+      const {
+        data:
+          requestedPost,
+
+        error:
+          requestedPostError,
+      } = await supabase
+        .from("posts")
+        .select(
+          `
+          id,
+          status,
+          platform,
+          scheduled_at
+          `
+        )
+        .eq(
+          "id",
+          postId
+        )
+        .maybeSingle();
+
+      if (requestedPostError) {
+        return NextResponse.json(
+          {
+            ok: false,
+
+            step:
+              "validate_post",
+
+            error:
+              requestedPostError.message,
+          },
+          {
+            status: 500,
+          }
+        );
+      }
+
+      if (!requestedPost) {
+        return NextResponse.json(
+          {
+            ok: false,
+
+            error:
+              "Post not found.",
+          },
+          {
+            status: 404,
+          }
+        );
+      }
+
+      if (
+        requestedPost.status !==
+        "scheduled"
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+
+            error:
+              "Only scheduled posts can be published.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      if (
+        requestedPost.platform !==
+          "instagram" &&
+        requestedPost.platform !==
+          "multi"
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+
+            error:
+              "Only Instagram or multi-platform posts are supported.",
+          },
+          {
+            status: 400,
+          }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          ok: false,
+
+          error:
+            "Post is not due for publishing.",
+        },
+        {
+          status: 400,
         }
       );
     }

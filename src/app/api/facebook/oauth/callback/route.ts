@@ -6,27 +6,43 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+type FacebookPage = {
+  id?: string;
+  name?: string;
+  access_token?: string;
+  tasks?: string[];
+};
+
 export async function GET(
   request: Request
 ) {
   try {
     const url =
-      new URL(request.url);
+      new URL(
+        request.url
+      );
 
     const code =
-      url.searchParams.get("code");
+      url.searchParams.get(
+        "code"
+      );
 
     const state =
-      url.searchParams.get("state");
+      url.searchParams.get(
+        "state"
+      );
 
-    const error =
-      url.searchParams.get("error");
+    const oauthError =
+      url.searchParams.get(
+        "error"
+      );
 
     /*
-      Om användaren avbryter
-      Facebook-inloggningen.
+      Användaren avbröt Facebook-login.
     */
-    if (error) {
+    if (
+      oauthError
+    ) {
       return NextResponse.redirect(
         new URL(
           "/?facebook_error=access_denied",
@@ -93,7 +109,9 @@ export async function GET(
       );
     }
 
-    if (!influencerId) {
+    if (
+      !influencerId
+    ) {
       return NextResponse.json(
         {
           ok: false,
@@ -198,7 +216,9 @@ export async function GET(
     const shortUserToken =
       tokenData.access_token;
 
-    if (!shortUserToken) {
+    if (
+      !shortUserToken
+    ) {
       return NextResponse.json(
         {
           ok: false,
@@ -277,7 +297,9 @@ export async function GET(
     const longUserToken =
       exchangeData.access_token;
 
-    if (!longUserToken) {
+    if (
+      !longUserToken
+    ) {
       return NextResponse.json(
         {
           ok: false,
@@ -294,11 +316,7 @@ export async function GET(
 
     /*
       3.
-      Kontrollera tokenen via
-      Meta debug_token.
-
-      Därifrån får vi bland annat
-      faktisk expires_at.
+      Kontrollera token via debug_token.
     */
     const appAccessToken =
       `${appId}|${appSecret}`;
@@ -372,42 +390,44 @@ export async function GET(
 
     /*
       Meta returnerar expires_at
-      som Unix timestamp i sekunder.
+      som Unix timestamp.
     */
-const debugExpiresAt =
-  Number(
-    tokenInfo.expires_at ??
+    const debugExpiresAt =
+      Number(
+        tokenInfo.expires_at ??
+          0
+      );
+
+    const exchangeExpiresIn =
+      Number(
+        exchangeData.expires_in ??
+          0
+      );
+
+    let expiresAt:
+      string | null =
+      null;
+
+    if (
+      debugExpiresAt >
       0
-  );
-
-const exchangeExpiresIn =
-  Number(
-    exchangeData.expires_in ??
+    ) {
+      expiresAt =
+        new Date(
+          debugExpiresAt *
+            1000
+        ).toISOString();
+    } else if (
+      exchangeExpiresIn >
       0
-  );
-
-let expiresAt:
-  string | null =
-  null;
-
-if (
-  debugExpiresAt > 0
-) {
-  expiresAt =
-    new Date(
-      debugExpiresAt *
-        1000
-    ).toISOString();
-} else if (
-  exchangeExpiresIn > 0
-) {
-  expiresAt =
-    new Date(
-      Date.now() +
-        exchangeExpiresIn *
-          1000
-    ).toISOString();
-}
+    ) {
+      expiresAt =
+        new Date(
+          Date.now() +
+            exchangeExpiresIn *
+              1000
+        ).toISOString();
+    }
 
     /*
       4.
@@ -508,7 +528,8 @@ if (
       );
     }
 
-    const pages =
+    const pages:
+      FacebookPage[] =
       Array.isArray(
         accountsData.data
       )
@@ -517,12 +538,57 @@ if (
 
     /*
       6.
-      Hämta Facebook-kontot
-      som hör till influencern.
+      Hämta influencern.
     */
     const {
       data:
-        socialAccount,
+        influencer,
+
+      error:
+        influencerError,
+    } = await supabase
+      .from(
+        "influencers"
+      )
+      .select(
+        `
+        id,
+        name
+        `
+      )
+      .eq(
+        "id",
+        influencerId
+      )
+      .single();
+
+    if (
+      influencerError ||
+      !influencer
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          step:
+            "load_influencer",
+          error:
+            influencerError?.message ??
+            "Influencer not found.",
+        },
+        {
+          status: 404,
+        }
+      );
+    }
+
+    /*
+      7.
+      Finns Facebook-kontot redan?
+    */
+    const {
+      data:
+        existingSocialAccount,
+
       error:
         socialAccountError,
     } = await supabase
@@ -544,11 +610,10 @@ if (
         "platform",
         "facebook"
       )
-      .single();
+      .maybeSingle();
 
     if (
-      socialAccountError ||
-      !socialAccount
+      socialAccountError
     ) {
       return NextResponse.json(
         {
@@ -556,33 +621,116 @@ if (
           step:
             "load_social_account",
           error:
-            socialAccountError?.message ??
-            "Facebook account not found for influencer.",
+            socialAccountError.message,
         },
         {
-          status: 404,
+          status: 500,
         }
       );
     }
 
     /*
-      7.
-      Matcha influencerns sparade
-      Page ID mot Pages från Meta.
+      8.
+      Välj rätt Facebook Page.
     */
-    const page =
-      pages.find(
-        (
-          item: {
-            id?: string;
-            name?: string;
-            access_token?: string;
-            tasks?: string[];
+    let page:
+      FacebookPage | undefined;
+
+    if (
+      existingSocialAccount
+    ) {
+      /*
+        Reconnect:
+        använd redan sparat Page ID.
+      */
+      page =
+        pages.find(
+          (
+            item
+          ) =>
+            item.id ===
+            existingSocialAccount
+              .external_account_id
+        );
+    } else {
+      /*
+        Första anslutningen:
+        matcha influencerns namn
+        mot Facebook Page-namnet.
+      */
+      const normalizedInfluencerName =
+        String(
+          influencer.name
+        )
+          .trim()
+          .toLowerCase();
+
+      const matchingPages =
+        pages.filter(
+          (
+            item
+          ) =>
+            String(
+              item.name ??
+                ""
+            )
+              .trim()
+              .toLowerCase() ===
+            normalizedInfluencerName
+        );
+
+      if (
+        matchingPages.length ===
+        1
+      ) {
+        page =
+          matchingPages[0];
+      } else if (
+        matchingPages.length ===
+        0
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            step:
+              "match_page",
+            error:
+              `No Facebook Page matched influencer name "${influencer.name}".`,
+            availablePages:
+              pages.map(
+                (
+                  item
+                ) => ({
+                  id:
+                    item.id ??
+                    null,
+                  name:
+                    item.name ??
+                    null,
+                })
+              ),
+          },
+          {
+            status:
+              404,
           }
-        ) =>
-          item.id ===
-          socialAccount.external_account_id
-      );
+        );
+      } else {
+        return NextResponse.json(
+          {
+            ok: false,
+            step:
+              "match_page",
+            error:
+              `More than one Facebook Page matched influencer name "${influencer.name}".`,
+          },
+          {
+            status:
+              409,
+          }
+        );
+      }
+    }
 
     if (!page) {
       return NextResponse.json(
@@ -591,10 +739,31 @@ if (
           step:
             "match_page",
           error:
-            `Page ${socialAccount.external_account_id} was not returned by Meta.`,
+            existingSocialAccount
+              ? `Page ${existingSocialAccount.external_account_id} was not returned by Meta.`
+              : "Facebook Page could not be resolved.",
         },
         {
-          status: 404,
+          status:
+            404,
+        }
+      );
+    }
+
+    if (
+      !page.id
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          step:
+            "match_page",
+          error:
+            "Facebook Page ID is missing.",
+        },
+        {
+          status:
+            500,
         }
       );
     }
@@ -611,13 +780,14 @@ if (
             "Page access token is missing.",
         },
         {
-          status: 500,
+          status:
+            500,
         }
       );
     }
 
     /*
-      8.
+      9.
       Spara / uppdatera
       long-lived User Token.
     */
@@ -661,55 +831,110 @@ if (
             userTokenError.message,
         },
         {
-          status: 500,
-        }
-      );
-    }
-
-    /*
-      9.
-      Uppdatera influencerns
-      Facebook Page Access Token.
-    */
-    const {
-      error:
-        pageTokenError,
-    } = await supabase
-      .from(
-        "social_accounts"
-      )
-      .update({
-        access_token:
-          page.access_token,
-      })
-      .eq(
-        "id",
-        socialAccount.id
-      );
-
-    if (
-      pageTokenError
-    ) {
-      return NextResponse.json(
-        {
-          ok: false,
-          step:
-            "save_page_token",
-          error:
-            pageTokenError.message,
-        },
-        {
-          status: 500,
+          status:
+            500,
         }
       );
     }
 
     /*
       10.
+      Skapa eller uppdatera
+      Facebook-kontot.
+    */
+    if (
+      existingSocialAccount
+    ) {
+      const {
+        error:
+          updateAccountError,
+      } = await supabase
+        .from(
+          "social_accounts"
+        )
+        .update({
+          username:
+            page.name ??
+            existingSocialAccount.username,
+
+          external_account_id:
+            page.id,
+
+          access_token:
+            page.access_token,
+        })
+        .eq(
+          "id",
+          existingSocialAccount.id
+        );
+
+      if (
+        updateAccountError
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            step:
+              "update_social_account",
+            error:
+              updateAccountError.message,
+          },
+          {
+            status:
+              500,
+          }
+        );
+      }
+    } else {
+      const {
+        error:
+          insertAccountError,
+      } = await supabase
+        .from(
+          "social_accounts"
+        )
+        .insert({
+          influencer_id:
+            influencerId,
+
+          platform:
+            "facebook",
+
+          username:
+            page.name ??
+            influencer.name,
+
+          external_account_id:
+            page.id,
+
+          access_token:
+            page.access_token,
+        });
+
+      if (
+        insertAccountError
+      ) {
+        return NextResponse.json(
+          {
+            ok: false,
+            step:
+              "create_social_account",
+            error:
+              insertAccountError.message,
+          },
+          {
+            status:
+              500,
+          }
+        );
+      }
+    }
+
+    /*
+      11.
       OAuth klart.
 
-      Skicka tillbaka användaren
-      till influencerns sida.
+      Tillbaka till influencerns sida.
     */
     return NextResponse.redirect(
       new URL(
@@ -720,7 +945,8 @@ if (
   } catch (error) {
     return NextResponse.json(
       {
-        ok: false,
+        ok:
+          false,
 
         error:
           error instanceof Error
@@ -728,7 +954,8 @@ if (
             : "Unknown error",
       },
       {
-        status: 500,
+        status:
+          500,
       }
     );
   }

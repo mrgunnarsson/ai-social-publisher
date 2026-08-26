@@ -6,6 +6,43 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+type MetricName =
+  | "likes"
+  | "comments"
+  | "saves"
+  | "shares"
+  | "reach"
+  | "views";
+
+type MetricUpdates =
+  Partial<
+    Record<
+      MetricName,
+      number
+    >
+  >;
+
+function readMetricValue(
+  value: unknown
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  const metricValue =
+    Number(value);
+
+  return Number.isFinite(
+    metricValue
+  ) && metricValue >= 0
+    ? metricValue
+    : null;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -114,15 +151,38 @@ export async function POST(request: Request) {
           continue;
         }
 
+        const metricUpdates:
+          MetricUpdates = {};
+        const unavailableMetrics:
+          MetricName[] = [];
+
         const likes =
-          Number(
-            mediaData.like_count ?? 0
+          readMetricValue(
+            mediaData.like_count
           );
 
-        const comments =
-          Number(
-            mediaData.comments_count ?? 0
+        if (likes === null) {
+          unavailableMetrics.push(
+            "likes"
           );
+        } else {
+          metricUpdates.likes =
+            likes;
+        }
+
+        const comments =
+          readMetricValue(
+            mediaData.comments_count
+          );
+
+        if (comments === null) {
+          unavailableMetrics.push(
+            "comments"
+          );
+        } else {
+          metricUpdates.comments =
+            comments;
+        }
 
         // ---------------------------------------------
         // B. Hämta Instagram Insights
@@ -141,10 +201,19 @@ export async function POST(request: Request) {
         const insightsData =
           await insightsResponse.json();
 
-        let reach = 0;
-        let saves = 0;
-        let shares = 0;
-        let views = 0;
+        const returnedInsightMetrics =
+          new Set<MetricName>();
+
+        const requestedInsightMetrics:
+          MetricName[] = [
+            "reach",
+            "saves",
+            "shares",
+            "views",
+          ];
+
+        let insightsSucceeded =
+          false;
 
         if (
           insightsResponse.ok &&
@@ -152,6 +221,9 @@ export async function POST(request: Request) {
             insightsData.data
           )
         ) {
+          insightsSucceeded =
+            true;
+
           for (
             const metric of
               insightsData.data
@@ -159,30 +231,84 @@ export async function POST(request: Request) {
             const value =
               metric.values?.[0]
                 ?.value ??
-              metric.value ??
-              0;
+              metric.value;
+
+            const parsedValue =
+              readMetricValue(
+                value
+              );
 
             switch (metric.name) {
               case "reach":
-                reach =
-                  Number(value);
+                returnedInsightMetrics.add(
+                  "reach"
+                );
+                if (
+                  parsedValue !==
+                  null
+                ) {
+                  metricUpdates.reach =
+                    parsedValue;
+                }
                 break;
 
               case "saved":
-                saves =
-                  Number(value);
+                returnedInsightMetrics.add(
+                  "saves"
+                );
+                if (
+                  parsedValue !==
+                  null
+                ) {
+                  metricUpdates.saves =
+                    parsedValue;
+                }
                 break;
 
               case "shares":
-                shares =
-                  Number(value);
+                returnedInsightMetrics.add(
+                  "shares"
+                );
+                if (
+                  parsedValue !==
+                  null
+                ) {
+                  metricUpdates.shares =
+                    parsedValue;
+                }
                 break;
 
               case "views":
-                views =
-                  Number(value);
+                returnedInsightMetrics.add(
+                  "views"
+                );
+                if (
+                  parsedValue !==
+                  null
+                ) {
+                  metricUpdates.views =
+                    parsedValue;
+                }
                 break;
             }
+          }
+        }
+
+        for (
+          const metricName of
+            requestedInsightMetrics
+        ) {
+          if (
+            !returnedInsightMetrics.has(
+              metricName
+            ) ||
+            metricUpdates[
+              metricName
+            ] === undefined
+          ) {
+            unavailableMetrics.push(
+              metricName
+            );
           }
         }
 
@@ -191,27 +317,42 @@ export async function POST(request: Request) {
         // Vi returnerar dock felet för felsökning.
 
         const insightsError =
-          !insightsResponse.ok
-            ? insightsData
+          !insightsSucceeded
+            ? {
+                message:
+                  "Instagram insights request failed or returned an invalid response.",
+                details:
+                  insightsData,
+              }
             : null;
 
         // ---------------------------------------------
         // C. Uppdatera posten i Supabase
         // ---------------------------------------------
 
-        const {
-          error: updateError,
-        } = await supabase
-          .from("posts")
-          .update({
-            likes,
-            comments,
-            saves,
-            shares,
-            reach,
-            views,
-          })
-          .eq("id", post.id);
+        let updateError:
+          { message: string } | null =
+            null;
+
+        if (
+          Object.keys(
+            metricUpdates
+          ).length > 0
+        ) {
+          const updateResult =
+            await supabase
+              .from("posts")
+              .update(
+                metricUpdates
+              )
+              .eq(
+                "id",
+                post.id
+              );
+
+          updateError =
+            updateResult.error;
+        }
 
         if (updateError) {
           results.push({
@@ -234,13 +375,24 @@ export async function POST(request: Request) {
         results.push({
           postId: post.id,
           mediaId,
-          ok: true,
-          likes,
-          comments,
-          saves,
-          shares,
-          reach,
-          views,
+          ok:
+            insightsSucceeded,
+          step:
+            insightsSucceeded
+              ? null
+              : "insights",
+          partial:
+            !insightsSucceeded ||
+            unavailableMetrics.length >
+              0,
+          updatedMetrics:
+            metricUpdates,
+          unavailableMetrics:
+            [
+              ...new Set(
+                unavailableMetrics
+              ),
+            ],
           insightsError,
         });
       } catch (error) {

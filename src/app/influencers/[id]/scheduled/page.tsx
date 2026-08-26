@@ -5,29 +5,42 @@ import {
   useState,
 } from "react";
 
-import { useParams } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import {
+  useParams,
+} from "next/navigation";
+
+import {
+  supabase,
+} from "@/lib/supabase";
 
 type Influencer = {
   id: string;
   name: string;
 };
 
+type Destination = {
+  id: string;
+  platform: string;
+  status: string;
+};
+
 type ScheduledPost = {
   id: string;
   caption: string | null;
   media_url: string | null;
-  media_type: "image" | "video" | null;
-  scheduled_at: string | null;
+  media_type:
+    | "image"
+    | "video"
+    | null;
+  scheduled_at:
+    | string
+    | null;
   status: string;
   platform: string;
   created_at: string;
 
-  destinations?: {
-    id: string;
-    platform: string;
-    status: string;
-  }[];
+  destinations?:
+    Destination[];
 };
 
 function formatScheduledTime(
@@ -36,15 +49,30 @@ function formatScheduledTime(
   return new Intl.DateTimeFormat(
     "sv-SE",
     {
-      timeZone: "Europe/Stockholm",
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
+      timeZone:
+        "Europe/Stockholm",
+
+      weekday:
+        "long",
+
+      day:
+        "numeric",
+
+      month:
+        "long",
+
+      year:
+        "numeric",
+
+      hour:
+        "2-digit",
+
+      minute:
+        "2-digit",
     }
-  ).format(new Date(value));
+  ).format(
+    new Date(value)
+  );
 }
 
 function toLocalDateTimeInput(
@@ -59,12 +87,24 @@ function toLocalDateTimeInput(
       {
         timeZone:
           "Europe/Stockholm",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
+
+        year:
+          "numeric",
+
+        month:
+          "2-digit",
+
+        day:
+          "2-digit",
+
+        hour:
+          "2-digit",
+
+        minute:
+          "2-digit",
+
+        hourCycle:
+          "h23",
       }
     );
 
@@ -78,7 +118,8 @@ function toLocalDateTimeInput(
   ) =>
     parts.find(
       (part) =>
-        part.type === type
+        part.type ===
+        type
     )?.value ?? "";
 
   return (
@@ -93,17 +134,11 @@ function toLocalDateTimeInput(
 function stockholmLocalToIso(
   value: string
 ) {
-  /*
-    datetime-local saknar timezone.
-
-    Vi räknar därför fram korrekt
-    UTC-tid för Europe/Stockholm.
-  */
-
   const [
     datePart,
     timePart,
-  ] = value.split("T");
+  ] =
+    value.split("T");
 
   if (
     !datePart ||
@@ -133,17 +168,15 @@ function stockholmLocalToIso(
     !year ||
     !month ||
     !day ||
-    Number.isNaN(hour) ||
-    Number.isNaN(minute)
+    Number.isNaN(
+      hour
+    ) ||
+    Number.isNaN(
+      minute
+    )
   ) {
     return null;
   }
-
-  /*
-    Börja med att tolka komponenterna
-    som UTC och jämför sedan med hur
-    samma tid visas i Stockholm.
-  */
 
   let utc =
     Date.UTC(
@@ -160,12 +193,24 @@ function stockholmLocalToIso(
       {
         timeZone:
           "Europe/Stockholm",
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        hourCycle: "h23",
+
+        year:
+          "numeric",
+
+        month:
+          "2-digit",
+
+        day:
+          "2-digit",
+
+        hour:
+          "2-digit",
+
+        minute:
+          "2-digit",
+
+        hourCycle:
+          "h23",
       }
     );
 
@@ -193,7 +238,8 @@ function stockholmLocalToIso(
     const shownAsUtc =
       Date.UTC(
         getPart("year"),
-        getPart("month") - 1,
+        getPart("month") -
+          1,
         getPart("day"),
         getPart("hour"),
         getPart("minute")
@@ -216,6 +262,98 @@ function stockholmLocalToIso(
   return new Date(
     utc
   ).toISOString();
+}
+
+function platformName(
+  platform: string
+) {
+  if (
+    platform ===
+    "instagram"
+  ) {
+    return "Instagram";
+  }
+
+  if (
+    platform ===
+    "facebook"
+  ) {
+    return "Facebook";
+  }
+
+  return platform;
+}
+
+function statusName(
+  status: string
+) {
+  if (
+    status ===
+    "published"
+  ) {
+    return "Published";
+  }
+
+  if (
+    status ===
+    "scheduled"
+  ) {
+    return "Scheduled";
+  }
+
+  if (
+    status ===
+    "failed"
+  ) {
+    return "Failed";
+  }
+
+  return status;
+}
+
+function DestinationBadge({
+  destination,
+}: {
+  destination:
+    Destination;
+}) {
+  const isPublished =
+    destination.status ===
+    "published";
+
+  const isFailed =
+    destination.status ===
+    "failed";
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+        isPublished
+          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+          : isFailed
+            ? "border-red-500/30 bg-red-500/10 text-red-400"
+            : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+      }`}
+    >
+      <span>
+        {platformName(
+          destination.platform
+        )}
+      </span>
+
+      <span className="opacity-60">
+        ·
+      </span>
+
+      <span>
+        {isPublished
+          ? "✓ Published"
+          : statusName(
+              destination.status
+            )}
+      </span>
+    </span>
+  );
 }
 
 export default function ScheduledPostsPage() {
@@ -291,15 +429,25 @@ export default function ScheduledPostsPage() {
 
   async function loadData() {
     try {
-      setLoading(true);
+      setLoading(
+        true
+      );
+
       setError("");
 
       const {
-        data: influencerData,
-        error: influencerError,
+        data:
+          influencerData,
+
+        error:
+          influencerError,
       } = await supabase
-        .from("influencers")
-        .select("id, name")
+        .from(
+          "influencers"
+        )
+        .select(
+          "id, name"
+        )
         .eq(
           "id",
           influencerId
@@ -319,51 +467,60 @@ export default function ScheduledPostsPage() {
         influencerData
       );
 
-     const {
-  data: scheduledPosts,
-  error: postsError,
-} = await supabase
-  .from("posts")
-  .select(
-    `
-    id,
-    caption,
-    media_url,
-    media_type,
-    scheduled_at,
-    status,
-    platform,
-    created_at,
-    destinations:post_destinations (
-      id,
-      platform,
-      status
-    )
-    `
-  )
-  .eq(
-    "influencer_id",
-    influencerId
-  )
-  .eq(
-    "status",
-    "scheduled"
-  )
-  .order(
-    "scheduled_at",
-    {
-      ascending: true,
-    }
-  );
+      const {
+        data:
+          scheduledPosts,
 
-      if (postsError) {
+        error:
+          postsError,
+      } = await supabase
+        .from("posts")
+        .select(
+          `
+          id,
+          caption,
+          media_url,
+          media_type,
+          scheduled_at,
+          status,
+          platform,
+          created_at,
+          destinations:post_destinations (
+            id,
+            platform,
+            status
+          )
+          `
+        )
+        .eq(
+          "influencer_id",
+          influencerId
+        )
+        .eq(
+          "status",
+          "scheduled"
+        )
+        .order(
+          "scheduled_at",
+          {
+            ascending:
+              true,
+          }
+        );
+
+      if (
+        postsError
+      ) {
         throw new Error(
           postsError.message
         );
       }
 
       setPosts(
-        scheduledPosts ?? []
+        (
+          scheduledPosts ??
+          []
+        ) as ScheduledPost[]
       );
     } catch (error) {
       setError(
@@ -372,7 +529,9 @@ export default function ScheduledPostsPage() {
           : "Något gick fel."
       );
     } finally {
-      setLoading(false);
+      setLoading(
+        false
+      );
     }
   }
 
@@ -384,7 +543,9 @@ export default function ScheduledPostsPage() {
         "Vill du avbryta det här schemalagda inlägget?"
       );
 
-    if (!confirmed) {
+    if (
+      !confirmed
+    ) {
       return;
     }
 
@@ -392,7 +553,8 @@ export default function ScheduledPostsPage() {
       await fetch(
         "/api/posts/cancel",
         {
-          method: "POST",
+          method:
+            "POST",
 
           headers: {
             "Content-Type":
@@ -436,10 +598,12 @@ export default function ScheduledPostsPage() {
   ) {
     const confirmed =
       window.confirm(
-        "Vill du publicera det här inlägget på Instagram nu?"
+        "Vill du publicera det här inlägget nu?"
       );
 
-    if (!confirmed) {
+    if (
+      !confirmed
+    ) {
       return;
     }
 
@@ -452,7 +616,8 @@ export default function ScheduledPostsPage() {
         await fetch(
           "/api/posts/publish-now",
           {
-            method: "POST",
+            method:
+              "POST",
 
             headers: {
               "Content-Type":
@@ -481,20 +646,28 @@ export default function ScheduledPostsPage() {
           "Publiceringen misslyckades."
         );
 
+        /*
+          Ladda om datan så vi ser
+          om en destination trots allt
+          hann publiceras.
+        */
+        await loadData();
+
         return;
       }
 
-      setPosts(
-        (current) =>
-          current.filter(
-            (post) =>
-              post.id !==
-              postId
-          )
-      );
+      /*
+        Backend avgör vilka
+        destinationer som återstår.
+
+        Ladda därför om från databasen
+        i stället för att anta att
+        hela posten är färdig.
+      */
+      await loadData();
 
       alert(
-        "Inlägget är publicerat på Instagram."
+        "Publiceringen är klar."
       );
     } catch (error) {
       console.error(
@@ -504,6 +677,8 @@ export default function ScheduledPostsPage() {
       alert(
         "Publiceringen misslyckades."
       );
+
+      await loadData();
     } finally {
       setPublishingPostId(
         null
@@ -512,14 +687,16 @@ export default function ScheduledPostsPage() {
   }
 
   function startEditing(
-    post: ScheduledPost
+    post:
+      ScheduledPost
   ) {
     setEditingPostId(
       post.id
     );
 
     setEditCaption(
-      post.caption ?? ""
+      post.caption ??
+        ""
     );
 
     if (
@@ -569,7 +746,9 @@ export default function ScheduledPostsPage() {
         editScheduledAt
       );
 
-    if (!scheduledAtIso) {
+    if (
+      !scheduledAtIso
+    ) {
       alert(
         "Datum eller tid är ogiltig."
       );
@@ -602,7 +781,8 @@ export default function ScheduledPostsPage() {
         await fetch(
           "/api/posts/update-scheduled",
           {
-            method: "POST",
+            method:
+              "POST",
 
             headers: {
               "Content-Type":
@@ -612,8 +792,10 @@ export default function ScheduledPostsPage() {
             body:
               JSON.stringify({
                 postId,
+
                 caption:
                   editCaption,
+
                 scheduledAt:
                   scheduledAtIso,
               }),
@@ -639,42 +821,13 @@ export default function ScheduledPostsPage() {
         return;
       }
 
-      const updatedPost =
-        result.post as ScheduledPost;
-
-      setPosts(
-        (current) =>
-          current
-            .map(
-              (post) =>
-                post.id ===
-                postId
-                  ? updatedPost
-                  : post
-            )
-            .sort(
-              (a, b) => {
-                const aTime =
-                  a.scheduled_at
-                    ? new Date(
-                        a.scheduled_at
-                      ).getTime()
-                    : 0;
-
-                const bTime =
-                  b.scheduled_at
-                    ? new Date(
-                        b.scheduled_at
-                      ).getTime()
-                    : 0;
-
-                return (
-                  aTime -
-                  bTime
-                );
-              }
-            )
-      );
+      /*
+        Vi laddar om posten från
+        databasen eftersom destinationer
+        inte nödvändigtvis returneras
+        från update-endpointen.
+      */
+      await loadData();
 
       stopEditing();
     } catch (error) {
@@ -694,9 +847,13 @@ export default function ScheduledPostsPage() {
 
   useEffect(() => {
     loadData();
-  }, [influencerId]);
+  }, [
+    influencerId,
+  ]);
 
-  if (loading) {
+  if (
+    loading
+  ) {
     return (
       <main className="min-h-screen bg-zinc-950 p-8 text-white">
         Laddar...
@@ -718,7 +875,8 @@ export default function ScheduledPostsPage() {
 
   return (
     <main className="min-h-screen bg-zinc-950 px-6 py-10 text-white">
-      <div className="mx-auto max-w-4xl">
+
+      <div className="mx-auto max-w-5xl">
 
         <a
           href={`/influencers/${influencerId}`}
@@ -730,8 +888,11 @@ export default function ScheduledPostsPage() {
         <div className="mt-8 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
 
           <div>
+
             <p className="text-sm font-medium uppercase tracking-wider text-zinc-500">
-              {influencer.name}
+              {
+                influencer.name
+              }
             </p>
 
             <h1 className="mt-2 text-4xl font-bold">
@@ -741,6 +902,7 @@ export default function ScheduledPostsPage() {
             <p className="mt-2 text-zinc-400">
               Kommande schemalagda publiceringar.
             </p>
+
           </div>
 
           <a
@@ -763,14 +925,11 @@ export default function ScheduledPostsPage() {
               </div>
 
               <h2 className="mt-4 text-xl font-semibold">
-                Inga schemalagda
-                inlägg
+                Inga schemalagda inlägg
               </h2>
 
               <p className="mt-2 text-sm text-zinc-500">
-                När du schemalägger
-                ett inlägg kommer det
-                att visas här.
+                När du schemalägger ett inlägg kommer det att visas här.
               </p>
 
               <a
@@ -782,13 +941,21 @@ export default function ScheduledPostsPage() {
 
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-5">
 
               {posts.map(
                 (post) => {
                   const isEditing =
                     editingPostId ===
                     post.id;
+
+                  const isVideo =
+                    post.media_type ===
+                    "video";
+
+                  const destinations =
+                    post.destinations ??
+                    [];
 
                   return (
                     <div
@@ -797,84 +964,123 @@ export default function ScheduledPostsPage() {
                       }
                       className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900"
                     >
+
                       <div className="flex flex-col sm:flex-row">
 
-                        <div className="w-full shrink-0 bg-zinc-800 sm:w-44">
+                        {/* MEDIA */}
 
-{post.media_url ? (
-  post.media_type ===
-  "video" ? (
-    <div className="aspect-[9/16] w-full overflow-hidden bg-black">
-      <video
-        src={post.media_url}
-        controls
-        playsInline
-        preload="metadata"
-        className="h-full w-full object-cover"
-      />
-    </div>
-  ) : (
-    <div className="aspect-square w-full overflow-hidden">
-      <img
-        src={post.media_url}
-        alt=""
-        className="h-full w-full object-cover"
-      />
-    </div>
-  )
-) : (
-  <div className="flex aspect-square w-full items-center justify-center text-zinc-600">
-    No media
-  </div>
-)}
+                        <div className="flex shrink-0 items-start justify-center bg-black p-4 sm:w-56">
+
+                          {post.media_url ? (
+                            isVideo ? (
+                              /*
+                                REEL
+
+                                Samma 9:16-format som
+                                1080 x 1920.
+
+                                object-contain gör att vi
+                                aldrig croppar videon i
+                                Scheduled Posts.
+                              */
+                              <div className="aspect-[9/16] w-full max-w-[190px] overflow-hidden rounded-xl bg-black">
+
+                                <video
+                                  src={
+                                    post.media_url
+                                  }
+                                  controls
+                                  playsInline
+                                  preload="metadata"
+                                  className="h-full w-full object-contain"
+                                />
+
+                              </div>
+                            ) : (
+                              /*
+                                IMAGE
+
+                                Vi tvingar inte längre
+                                bilden till kvadrat.
+
+                                Bilden får behålla sitt
+                                riktiga format.
+                              */
+                              <div className="flex w-full max-w-[220px] items-center justify-center overflow-hidden rounded-xl bg-black">
+
+                                <img
+                                  src={
+                                    post.media_url
+                                  }
+                                  alt=""
+                                  className="h-auto max-h-[360px] w-full object-contain"
+                                />
+
+                              </div>
+                            )
+                          ) : (
+                            <div className="flex aspect-[9/16] w-full max-w-[190px] items-center justify-center rounded-xl bg-zinc-900 text-sm text-zinc-600">
+                              No media
+                            </div>
+                          )}
 
                         </div>
 
-                        <div className="flex min-w-0 flex-1 flex-col justify-between p-5">
+                        {/* CONTENT */}
+
+                        <div className="flex min-w-0 flex-1 flex-col justify-between p-5 sm:p-6">
 
                           <div>
 
-                            <div className="flex flex-wrap items-center gap-3">
+                            <div className="flex flex-wrap items-center gap-2">
 
                               <span className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-400">
                                 Scheduled
                               </span>
 
+                              {isVideo && (
+                                <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-400">
+                                  Reel · 9:16
+                                </span>
+                              )}
+
+                            </div>
+
+                            {/* DESTINATIONS */}
+
+                            <div className="mt-4">
+
+                              <p className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-600">
+                                Destinationer
+                              </p>
+
                               <div className="flex flex-wrap gap-2">
 
-  {post.destinations &&
-  post.destinations.length > 0 ? (
-    post.destinations.map(
-      (destination) => (
-        <span
-          key={
-            destination.id
-          }
-          className="rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-400"
-        >
-          {destination.platform ===
-          "instagram"
-            ? "Instagram"
-            : destination.platform ===
-                "facebook"
-              ? "Facebook"
-              : destination.platform}
-        </span>
-      )
-    )
-  ) : (
-    <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-400">
-      {post.platform ===
-      "instagram"
-        ? "Instagram"
-        : post.platform ===
-            "facebook"
-          ? "Facebook"
-          : post.platform}
-    </span>
-  )}
+                                {destinations.length >
+                                0 ? (
+                                  destinations.map(
+                                    (
+                                      destination
+                                    ) => (
+                                      <DestinationBadge
+                                        key={
+                                          destination.id
+                                        }
+                                        destination={
+                                          destination
+                                        }
+                                      />
+                                    )
+                                  )
+                                ) : (
+                                  <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-400">
+                                    {platformName(
+                                      post.platform
+                                    )}
+                                  </span>
+                                )}
 
-</div>
+                              </div>
 
                             </div>
 
@@ -882,6 +1088,7 @@ export default function ScheduledPostsPage() {
                               <div className="mt-5 space-y-4">
 
                                 <div>
+
                                   <label className="mb-2 block text-sm font-medium text-zinc-300">
                                     Caption
                                   </label>
@@ -894,9 +1101,7 @@ export default function ScheduledPostsPage() {
                                       event
                                     ) =>
                                       setEditCaption(
-                                        event
-                                          .target
-                                          .value
+                                        event.target.value
                                       )
                                     }
                                     rows={
@@ -904,9 +1109,11 @@ export default function ScheduledPostsPage() {
                                     }
                                     className="w-full resize-none rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white outline-none transition focus:border-zinc-500"
                                   />
+
                                 </div>
 
                                 <div>
+
                                   <label className="mb-2 block text-sm font-medium text-zinc-300">
                                     Datum och tid
                                   </label>
@@ -920,20 +1127,20 @@ export default function ScheduledPostsPage() {
                                       event
                                     ) =>
                                       setEditScheduledAt(
-                                        event
-                                          .target
-                                          .value
+                                        event.target.value
                                       )
                                     }
                                     className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white outline-none transition focus:border-zinc-500"
                                   />
+
                                 </div>
 
                               </div>
                             ) : (
                               <>
+
                                 {post.scheduled_at && (
-                                  <h2 className="mt-4 text-xl font-semibold capitalize">
+                                  <h2 className="mt-5 text-xl font-semibold capitalize">
                                     {formatScheduledTime(
                                       post.scheduled_at
                                     )}
@@ -944,6 +1151,7 @@ export default function ScheduledPostsPage() {
                                   {post.caption ||
                                     "Ingen caption"}
                                 </p>
+
                               </>
                             )}
 
@@ -1036,7 +1244,9 @@ export default function ScheduledPostsPage() {
                           )}
 
                         </div>
+
                       </div>
+
                     </div>
                   );
                 }
@@ -1046,7 +1256,9 @@ export default function ScheduledPostsPage() {
           )}
 
         </div>
+
       </div>
+
     </main>
   );
 }

@@ -73,6 +73,12 @@ type MediaEditorProps = {
   onMusicVolumeChange: (
     value: number
   ) => void;
+
+  musicStartTime: number;
+
+onMusicStartTimeChange: (
+  value: number
+) => void;
 };
 
 const REEL_WIDTH =
@@ -111,6 +117,10 @@ export default function MediaEditor({
   musicVolume,
 
   onMusicVolumeChange,
+
+  musicStartTime,
+
+onMusicStartTimeChange,
 }: MediaEditorProps) {
   const [
     previewUrl,
@@ -336,6 +346,9 @@ export default function MediaEditor({
 
     audio.volume =
       musicVolume;
+
+      audio.currentTime =
+  musicStartTime;
 
     audioRef.current =
       audio;
@@ -915,7 +928,140 @@ export default function MediaEditor({
 
                 </div>
 
+                {/* MUSIC START TIME */}
+
+<div>
+
+  <div className="mb-2 flex items-center justify-between">
+
+    <span className="text-sm">
+      Musikstart
+    </span>
+
+    <span className="text-xs text-zinc-500">
+      {Math.floor(
+        musicStartTime / 60
+      )}
+      :
+      {Math.floor(
+        musicStartTime % 60
+      )
+        .toString()
+        .padStart(
+          2,
+          "0"
+        )}
+    </span>
+
+  </div>
+
+  <input
+    type="range"
+    min="0"
+    max={
+      selectedMusicTrack.duration_seconds ??
+      120
+    }
+    step="1"
+    value={
+      musicStartTime
+    }
+    onChange={(
+      event
+    ) => {
+      const value =
+        Number(
+          event.target.value
+        );
+
+      onMusicStartTimeChange(
+        value
+      );
+
+      /*
+        Om låten spelas i preview
+        hoppar vi direkt till den
+        nya startpunkten.
+      */
+      if (
+        audioRef.current
+      ) {
+        audioRef.current.currentTime =
+          value;
+      }
+    }}
+    className="w-full"
+  />
+
+  <div className="mt-2 flex items-center justify-between">
+
+    <button
+      type="button"
+      onClick={() => {
+        const value =
+          Math.max(
+            0,
+            musicStartTime -
+              5
+          );
+
+        onMusicStartTimeChange(
+          value
+        );
+
+        if (
+          audioRef.current
+        ) {
+          audioRef.current.currentTime =
+            value;
+        }
+      }}
+      className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
+    >
+      −5s
+    </button>
+
+    <span className="text-xs text-zinc-600">
+      Startpunkt i låten
+    </span>
+
+    <button
+      type="button"
+      onClick={() => {
+        const max =
+          selectedMusicTrack.duration_seconds ??
+          120;
+
+        const value =
+          Math.min(
+            max,
+            musicStartTime +
+              5
+          );
+
+        onMusicStartTimeChange(
+          value
+        );
+
+        if (
+          audioRef.current
+        ) {
+          audioRef.current.currentTime =
+            value;
+        }
+      }}
+      className="rounded-lg border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-white"
+    >
+      +5s
+    </button>
+
+  </div>
+
+</div>
+
               </div>
+
+              
             )}
 
           </div>
