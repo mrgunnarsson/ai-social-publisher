@@ -17,9 +17,17 @@ type ScheduledPost = {
   id: string;
   caption: string | null;
   media_url: string | null;
+  media_type: "image" | "video" | null;
   scheduled_at: string | null;
   status: string;
+  platform: string;
   created_at: string;
+
+  destinations?: {
+    id: string;
+    platform: string;
+    status: string;
+  }[];
 };
 
 function formatScheduledTime(
@@ -311,39 +319,42 @@ export default function ScheduledPostsPage() {
         influencerData
       );
 
-      const {
-        data: scheduledPosts,
-        error: postsError,
-      } = await supabase
-        .from("posts")
-        .select(
-          `
-          id,
-          caption,
-          media_url,
-          scheduled_at,
-          status,
-          created_at
-          `
-        )
-        .eq(
-          "influencer_id",
-          influencerId
-        )
-        .eq(
-          "platform",
-          "instagram"
-        )
-        .eq(
-          "status",
-          "scheduled"
-        )
-        .order(
-          "scheduled_at",
-          {
-            ascending: true,
-          }
-        );
+     const {
+  data: scheduledPosts,
+  error: postsError,
+} = await supabase
+  .from("posts")
+  .select(
+    `
+    id,
+    caption,
+    media_url,
+    media_type,
+    scheduled_at,
+    status,
+    platform,
+    created_at,
+    destinations:post_destinations (
+      id,
+      platform,
+      status
+    )
+    `
+  )
+  .eq(
+    "influencer_id",
+    influencerId
+  )
+  .eq(
+    "status",
+    "scheduled"
+  )
+  .order(
+    "scheduled_at",
+    {
+      ascending: true,
+    }
+  );
 
       if (postsError) {
         throw new Error(
@@ -728,8 +739,7 @@ export default function ScheduledPostsPage() {
             </h1>
 
             <p className="mt-2 text-zinc-400">
-              Kommande automatiska
-              Instagram-publiceringar.
+              Kommande schemalagda publiceringar.
             </p>
           </div>
 
@@ -789,21 +799,34 @@ export default function ScheduledPostsPage() {
                     >
                       <div className="flex flex-col sm:flex-row">
 
-                        <div className="h-64 w-full shrink-0 bg-zinc-800 sm:h-52 sm:w-52">
+                        <div className="w-full shrink-0 bg-zinc-800 sm:w-44">
 
-                          {post.media_url ? (
-                            <img
-                              src={
-                                post.media_url
-                              }
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-full items-center justify-center text-zinc-600">
-                              No media
-                            </div>
-                          )}
+{post.media_url ? (
+  post.media_type ===
+  "video" ? (
+    <div className="aspect-[9/16] w-full overflow-hidden bg-black">
+      <video
+        src={post.media_url}
+        controls
+        playsInline
+        preload="metadata"
+        className="h-full w-full object-cover"
+      />
+    </div>
+  ) : (
+    <div className="aspect-square w-full overflow-hidden">
+      <img
+        src={post.media_url}
+        alt=""
+        className="h-full w-full object-cover"
+      />
+    </div>
+  )
+) : (
+  <div className="flex aspect-square w-full items-center justify-center text-zinc-600">
+    No media
+  </div>
+)}
 
                         </div>
 
@@ -817,9 +840,41 @@ export default function ScheduledPostsPage() {
                                 Scheduled
                               </span>
 
-                              <span className="text-sm text-zinc-500">
-                                Instagram
-                              </span>
+                              <div className="flex flex-wrap gap-2">
+
+  {post.destinations &&
+  post.destinations.length > 0 ? (
+    post.destinations.map(
+      (destination) => (
+        <span
+          key={
+            destination.id
+          }
+          className="rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-400"
+        >
+          {destination.platform ===
+          "instagram"
+            ? "Instagram"
+            : destination.platform ===
+                "facebook"
+              ? "Facebook"
+              : destination.platform}
+        </span>
+      )
+    )
+  ) : (
+    <span className="rounded-full border border-zinc-700 bg-zinc-950 px-2.5 py-1 text-xs text-zinc-400">
+      {post.platform ===
+      "instagram"
+        ? "Instagram"
+        : post.platform ===
+            "facebook"
+          ? "Facebook"
+          : post.platform}
+    </span>
+  )}
+
+</div>
 
                             </div>
 

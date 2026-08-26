@@ -12,6 +12,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+type MediaType =
+  | "image"
+  | "video";
+
 type SocialAccount = {
   id: string;
   username: string;
@@ -27,6 +31,7 @@ type ScheduledPost = {
   social_account_id: string | null;
   caption: string | null;
   media_url: string | null;
+  media_type: MediaType;
   scheduled_at: string | null;
 };
 
@@ -74,7 +79,10 @@ async function loadSocialAccount(
   return data as SocialAccount;
 }
 
-async function publishInstagram(
+/*
+  INSTAGRAM IMAGE
+*/
+async function publishInstagramImage(
   post: ScheduledPost,
   socialAccount: SocialAccount
 ) {
@@ -99,7 +107,9 @@ async function publishInstagram(
   const publishingStartedAt =
     new Date();
 
-  // 1. Skapa container
+  /*
+    1. Skapa image container
+  */
   const createResponse =
     await fetch(
       `https://graph.instagram.com/${instagramUserId}/media`,
@@ -115,7 +125,9 @@ async function publishInstagram(
           new URLSearchParams({
             image_url:
               imageUrl,
+
             caption,
+
             access_token:
               accessToken,
           }),
@@ -138,7 +150,15 @@ async function publishInstagram(
   const creationId =
     createData.id;
 
-  // 2. Vänta på processing
+  if (!creationId) {
+    throw new Error(
+      "Instagram creation_id is missing."
+    );
+  }
+
+  /*
+    2. Vänta på processing
+  */
   let ready =
     false;
 
@@ -195,7 +215,9 @@ async function publishInstagram(
     );
   }
 
-  // 3. Publicera
+  /*
+    3. Publicera
+  */
   const publishResponse =
     await fetch(
       `https://graph.instagram.com/${instagramUserId}/media_publish`,
@@ -211,6 +233,7 @@ async function publishInstagram(
           new URLSearchParams({
             creation_id:
               creationId,
+
             access_token:
               accessToken,
           }),
@@ -233,7 +256,13 @@ async function publishInstagram(
   const publishedAt =
     new Date();
 
-  // 4. Hitta riktigt media-ID
+  /*
+    4. Hitta riktigt media-ID
+
+    Vi behåller samma metod som
+    tidigare för att inte ändra den
+    fungerande bildpubliceringen.
+  */
   let actualMediaId:
     string | null =
     null;
@@ -324,6 +353,19 @@ async function publishInstagram(
     }
   }
 
+  /*
+    Om media_publish returnerade
+    ett id använder vi det som
+    fallback.
+  */
+  if (
+    !actualMediaId &&
+    publishData.id
+  ) {
+    actualMediaId =
+      publishData.id;
+  }
+
   return {
     username:
       socialAccount.username,
@@ -333,10 +375,250 @@ async function publishInstagram(
 
     publishedAt:
       publishedAt.toISOString(),
+
+    mediaType:
+      "image" as const,
   };
 }
 
-async function publishFacebook(
+/*
+  INSTAGRAM REEL
+*/
+async function publishInstagramReel(
+  post: ScheduledPost,
+  socialAccount: SocialAccount
+) {
+  const instagramUserId =
+    socialAccount.external_account_id;
+
+  const accessToken =
+    socialAccount.access_token;
+
+  const caption =
+    post.caption ?? "";
+
+  const videoUrl =
+    post.media_url;
+
+  if (!videoUrl) {
+    throw new Error(
+      "media_url is missing."
+    );
+  }
+
+  /*
+    1. Skapa Reel-container
+  */
+  const createResponse =
+    await fetch(
+      `https://graph.instagram.com/${instagramUserId}/media`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+        },
+
+        body:
+          new URLSearchParams({
+            media_type:
+              "REELS",
+
+            video_url:
+              videoUrl,
+
+            caption,
+
+            /*
+              Reelen visas även i
+              användarens feed.
+            */
+            share_to_feed:
+              "true",
+
+            access_token:
+              accessToken,
+          }),
+      }
+    );
+
+  const createData =
+    await createResponse.json();
+
+  if (
+    !createResponse.ok
+  ) {
+    throw new Error(
+      `Instagram Reel container failed: ${JSON.stringify(
+        createData
+      )}`
+    );
+  }
+
+  const creationId =
+    createData.id;
+
+  if (!creationId) {
+    throw new Error(
+      "Instagram Reel creation_id is missing."
+    );
+  }
+
+  /*
+    Video tar betydligt längre tid
+    att behandla än en bild.
+
+    Max:
+    30 försök × 3 sekunder
+    ≈ 90 sekunder.
+  */
+  let ready =
+    false;
+
+  let lastStatus:
+    unknown = null;
+
+  for (
+    let attempt = 0;
+    attempt < 30;
+    attempt++
+  ) {
+    await sleep(3000);
+
+    const statusResponse =
+      await fetch(
+        `https://graph.instagram.com/${creationId}` +
+          `?fields=status_code,status` +
+          `&access_token=${accessToken}`,
+        {
+          cache:
+            "no-store",
+        }
+      );
+
+    const statusData =
+      await statusResponse.json();
+
+    lastStatus =
+      statusData;
+
+    if (
+      statusData.status_code ===
+      "FINISHED"
+    ) {
+      ready =
+        true;
+
+      break;
+    }
+
+    if (
+      statusData.status_code ===
+        "ERROR" ||
+      statusData.status_code ===
+        "EXPIRED"
+    ) {
+      break;
+    }
+  }
+
+  if (!ready) {
+    throw new Error(
+      `Instagram Reel processing failed: ${JSON.stringify(
+        lastStatus
+      )}`
+    );
+  }
+
+  /*
+    3. Publicera Reel
+  */
+  const publishResponse =
+    await fetch(
+      `https://graph.instagram.com/${instagramUserId}/media_publish`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+        },
+
+        body:
+          new URLSearchParams({
+            creation_id:
+              creationId,
+
+            access_token:
+              accessToken,
+          }),
+      }
+    );
+
+  const publishData =
+    await publishResponse.json();
+
+  if (
+    !publishResponse.ok
+  ) {
+    throw new Error(
+      `Instagram Reel publish failed: ${JSON.stringify(
+        publishData
+      )}`
+    );
+  }
+
+  return {
+    username:
+      socialAccount.username,
+
+    mediaId:
+      publishData.id ??
+      null,
+
+    publishedAt:
+      new Date()
+        .toISOString(),
+
+    mediaType:
+      "video" as const,
+  };
+}
+
+/*
+  INSTAGRAM
+
+  Väljer automatiskt bild eller Reel.
+*/
+async function publishInstagram(
+  post: ScheduledPost,
+  socialAccount: SocialAccount
+) {
+  if (
+    post.media_type ===
+    "video"
+  ) {
+    return publishInstagramReel(
+      post,
+      socialAccount
+    );
+  }
+
+  return publishInstagramImage(
+    post,
+    socialAccount
+  );
+}
+
+/*
+  FACEBOOK IMAGE
+
+  Detta är exakt samma princip
+  som den befintliga fungerande
+  Facebook-publiceringen.
+*/
+async function publishFacebookImage(
   post: ScheduledPost,
   socialAccount: SocialAccount
 ) {
@@ -373,7 +655,9 @@ async function publishFacebook(
           new URLSearchParams({
             url:
               imageUrl,
+
             caption,
+
             access_token:
               accessToken,
           }),
@@ -403,9 +687,217 @@ async function publishFacebook(
     publishedAt:
       new Date()
         .toISOString(),
+
+    mediaType:
+      "image" as const,
   };
 }
 
+/*
+  FACEBOOK REEL
+*/
+async function publishFacebookReel(
+  post: ScheduledPost,
+  socialAccount: SocialAccount
+) {
+  const pageId =
+    socialAccount.external_account_id;
+
+  const accessToken =
+    socialAccount.access_token;
+
+  const caption =
+    post.caption ?? "";
+
+  const videoUrl =
+    post.media_url;
+
+  if (!videoUrl) {
+    throw new Error(
+      "media_url is missing."
+    );
+  }
+
+  /*
+    1. STARTA REEL-UPLOAD
+  */
+  const startResponse =
+    await fetch(
+      `https://graph.facebook.com/v26.0/${pageId}/video_reels`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+        },
+
+        body:
+          new URLSearchParams({
+            upload_phase:
+              "start",
+
+            access_token:
+              accessToken,
+          }),
+      }
+    );
+
+  const startData =
+    await startResponse.json();
+
+  if (!startResponse.ok) {
+    throw new Error(
+      `Facebook Reel START failed: ${JSON.stringify(
+        startData
+      )}`
+    );
+  }
+
+  const videoId =
+    startData.video_id;
+
+  const uploadUrl =
+    startData.upload_url;
+
+  if (
+    !videoId ||
+    !uploadUrl
+  ) {
+    throw new Error(
+      `Facebook Reel START returned incomplete data: ${JSON.stringify(
+        startData
+      )}`
+    );
+  }
+
+  /*
+    2. LADDA UPP DEN HOSTADE VIDEON
+
+    Facebook hämtar vår färdiga
+    MP4 direkt från Supabase.
+  */
+  const uploadResponse =
+    await fetch(
+      uploadUrl,
+      {
+        method: "POST",
+
+        headers: {
+          Authorization:
+            `OAuth ${accessToken}`,
+
+          file_url:
+            videoUrl,
+        },
+      }
+    );
+
+  const uploadData =
+    await uploadResponse.json();
+
+  if (!uploadResponse.ok) {
+    throw new Error(
+      `Facebook Reel upload failed: ${JSON.stringify(
+        uploadData
+      )}`
+    );
+  }
+
+  /*
+    3. PUBLICERA REEL
+  */
+  const finishResponse =
+    await fetch(
+      `https://graph.facebook.com/v26.0/${pageId}/video_reels`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded",
+        },
+
+        body:
+          new URLSearchParams({
+            upload_phase:
+              "finish",
+
+            video_id:
+              videoId,
+
+            video_state:
+              "PUBLISHED",
+
+            description:
+              caption,
+
+            access_token:
+              accessToken,
+          }),
+      }
+    );
+
+  const finishData =
+    await finishResponse.json();
+
+  if (!finishResponse.ok) {
+    throw new Error(
+      `Facebook Reel FINISH failed: ${JSON.stringify(
+        finishData
+      )}`
+    );
+  }
+
+  return {
+    username:
+      socialAccount.username,
+
+    mediaId:
+      videoId,
+
+    publishedAt:
+      new Date()
+        .toISOString(),
+
+    mediaType:
+      "video" as const,
+  };
+}
+
+
+/*
+  FACEBOOK
+
+  Bild fungerar som tidigare.
+
+  Video/Reels aktiverar vi först
+  när Facebook Reel-flödet är
+  implementerat och testat.
+*/
+async function publishFacebook(
+  post: ScheduledPost,
+  socialAccount: SocialAccount
+) {
+  if (
+    post.media_type ===
+    "video"
+  ) {
+    return publishFacebookReel(
+      post,
+      socialAccount
+    );
+  }
+
+  return publishFacebookImage(
+    post,
+    socialAccount
+  );
+}
+
+/*
+  LEGACY INSTAGRAM
+*/
 async function processLegacyInstagramPost(
   post: ScheduledPost
 ) {
@@ -467,6 +959,9 @@ async function processLegacyInstagramPost(
     platform:
       "instagram",
 
+    mediaType:
+      post.media_type,
+
     ok:
       true,
 
@@ -474,6 +969,9 @@ async function processLegacyInstagramPost(
   };
 }
 
+/*
+  MULTI-PLATFORM
+*/
 async function processMultiPost(
   post: ScheduledPost
 ) {
@@ -596,6 +1094,9 @@ async function processMultiPost(
         username:
           result.username,
 
+        mediaType:
+          post.media_type,
+
         mediaId:
           result.mediaId,
 
@@ -607,20 +1108,23 @@ async function processMultiPost(
       });
     } catch (error) {
       /*
-        Låt destinationen fortsätta vara
-        "scheduled".
+        Destinationen ligger kvar som
+        scheduled så Cron kan göra
+        ett nytt försök senare.
 
-        Då kan Cron försöka igen nästa
-        gång utan att återpublicera de
-        destinationer som redan lyckades.
+        Detta är särskilt viktigt när
+        en multi-post lyckas på en
+        plattform men inte den andra.
       */
-
       destinationResults.push({
         destinationId:
           destination.id,
 
         platform:
           destination.platform,
+
+        mediaType:
+          post.media_type,
 
         ok:
           false,
@@ -634,10 +1138,8 @@ async function processMultiPost(
   }
 
   /*
-    Kontrollera om några destinationer
-    fortfarande återstår.
+    Finns några destinationer kvar?
   */
-
   const {
     count:
       remainingCount,
@@ -674,14 +1176,13 @@ async function processMultiPost(
   }
 
   /*
-    När ALLA destinationer är klara
-    markerar vi parent-posten som
-    published.
+    Endast när ALLA destinationer
+    är publicerade sätter vi parent
+    till published.
   */
-
   if (
-    (remainingCount ??
-      0) === 0
+    (remainingCount ?? 0) ===
+    0
   ) {
     const publishedAt =
       new Date()
@@ -720,6 +1221,9 @@ async function processMultiPost(
     platform:
       "multi",
 
+    mediaType:
+      post.media_type,
+
     ok:
       destinationResults.every(
         (item) =>
@@ -751,12 +1255,12 @@ export async function POST(
       return NextResponse.json(
         {
           ok: false,
+
           error:
             "CRON_SECRET is missing.",
         },
         {
-          status:
-            500,
+          status: 500,
         }
       );
     }
@@ -768,12 +1272,12 @@ export async function POST(
       return NextResponse.json(
         {
           ok: false,
+
           error:
             "Unauthorized.",
         },
         {
-          status:
-            401,
+          status: 401,
         }
       );
     }
@@ -782,6 +1286,11 @@ export async function POST(
       new Date()
         .toISOString();
 
+    /*
+      Här är den viktiga ändringen:
+      media_type hämtas tillsammans
+      med resten av posten.
+    */
     const {
       data:
         duePosts,
@@ -798,6 +1307,7 @@ export async function POST(
         social_account_id,
         caption,
         media_url,
+        media_type,
         scheduled_at
         `
       )
@@ -824,7 +1334,9 @@ export async function POST(
         }
       );
 
-    if (postsError) {
+    if (
+      postsError
+    ) {
       return NextResponse.json(
         {
           ok: false,
@@ -836,8 +1348,7 @@ export async function POST(
             postsError.message,
         },
         {
-          status:
-            500,
+          status: 500,
         }
       );
     }
@@ -877,14 +1388,13 @@ export async function POST(
         );
       } catch (error) {
         /*
-          För gamla Instagram-poster
-          behåller vi tidigare beteende.
+          Legacy Instagram behåller
+          tidigare fail-beteende.
 
-          Multi-poster ska däremot ligga
-          kvar som scheduled om någon
+          Multi ligger kvar som
+          scheduled om någon
           destination behöver retry.
         */
-
         if (
           post.platform ===
           "instagram"
@@ -907,6 +1417,9 @@ export async function POST(
 
           platform:
             post.platform,
+
+          mediaType:
+            post.media_type,
 
           ok:
             false,
@@ -944,8 +1457,7 @@ export async function POST(
             : "Unknown error",
       },
       {
-        status:
-          500,
+        status: 500,
       }
     );
   }

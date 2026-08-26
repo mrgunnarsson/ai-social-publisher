@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@Supabase/supabase-js";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -12,7 +12,8 @@ export async function POST(request: Request) {
 
     const {
       influencerId,
-      imageUrl,
+      mediaUrl,
+      mediaType = "image",
       caption = "",
       scheduledAt,
       platforms = [],
@@ -28,11 +29,25 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!imageUrl) {
+    if (!mediaUrl) {
       return NextResponse.json(
         {
           ok: false,
-          error: "imageUrl is required.",
+          error: "mediaUrl is required.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (
+      mediaType !== "image" &&
+      mediaType !== "video"
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "mediaType must be image or video.",
         },
         { status: 400 }
       );
@@ -55,7 +70,8 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           ok: false,
-          error: "At least one platform is required.",
+          error:
+            "At least one platform is required.",
         },
         { status: 400 }
       );
@@ -75,14 +91,17 @@ export async function POST(request: Request) {
           )
         )
       ).filter((platform) =>
-        allowedPlatforms.includes(platform)
+        allowedPlatforms.includes(
+          platform
+        )
       );
 
     if (uniquePlatforms.length === 0) {
       return NextResponse.json(
         {
           ok: false,
-          error: "No supported platform selected.",
+          error:
+            "No supported platform selected.",
         },
         { status: 400 }
       );
@@ -140,7 +159,9 @@ export async function POST(request: Request) {
           ok: false,
           step: "missing_accounts",
           error:
-            `Missing account for: ${missingPlatforms.join(", ")}`,
+            `Missing account for: ${missingPlatforms.join(
+              ", "
+            )}`,
         },
         { status: 400 }
       );
@@ -156,11 +177,14 @@ export async function POST(request: Request) {
         influencer_id: influencerId,
         platform: "multi",
         caption,
-        media_url: imageUrl,
+        media_url: mediaUrl,
+        media_type: mediaType,
         status: "scheduled",
         scheduled_at: scheduledAt,
       })
-      .select("id")
+      .select(
+        "id, media_type"
+      )
       .single();
 
     if (postError || !post) {
@@ -210,6 +234,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       postId: post.id,
+      mediaType: post.media_type,
       scheduledAt,
       platforms: accounts.map(
         (account) => ({

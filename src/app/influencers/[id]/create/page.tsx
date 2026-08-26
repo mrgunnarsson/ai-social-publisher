@@ -8,6 +8,11 @@ import {
 
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import MediaEditor, {
+  type TextPosition,
+  type TextColor,
+  type MusicTrack,
+} from "@/components/post-editor/MediaEditor";
 
 type Recommendation = {
   rank: number;
@@ -123,9 +128,50 @@ export default function CreatePostPage() {
     useState("");
 
     const [
+  overlayText,
+  setOverlayText,
+] = useState("");
+
+    const [
   publishToInstagram,
   setPublishToInstagram,
 ] = useState(true);
+
+const [
+  textPosition,
+  setTextPosition,
+] = useState<TextPosition>(
+  "bottom"
+);
+
+const [
+  fontSize,
+  setFontSize,
+] = useState(48);
+
+const [
+  textColor,
+  setTextColor,
+] = useState<TextColor>(
+  "white"
+);
+
+const [
+  selectedMusicTrack,
+  setSelectedMusicTrack,
+] = useState<MusicTrack | null>(
+  null
+);
+
+const [
+  originalAudioVolume,
+  setOriginalAudioVolume,
+] = useState(1);
+
+const [
+  musicVolume,
+  setMusicVolume,
+] = useState(0.7);
 
 const [
   publishToFacebook,
@@ -265,7 +311,7 @@ const [
       );
     }, [recommendation]);
 
-  async function uploadImage() {
+  async function uploadMedia() {
     if (!file) {
       throw new Error(
         "Välj en bild först."
@@ -320,9 +366,74 @@ const [
     );
   }
 
+  async function renderVideo(
+  videoUrl: string
+) {
+  const response =
+    await fetch(
+      "/api/media/render",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+
+        body: JSON.stringify({
+influencerId,
+
+  videoUrl,
+
+  overlayText,
+
+  textPosition,
+
+  fontSize,
+
+  textColor,
+
+  musicUrl:
+    selectedMusicTrack?.audio_url ??
+    null,
+
+  originalAudioVolume,
+
+  musicVolume,
+}),
+      }
+    );
+
+  const result =
+    await response.json();
+
+  if (
+    !response.ok ||
+    !result.ok
+  ) {
+    throw new Error(
+      typeof result.error ===
+        "string"
+        ? result.error
+        : "Videorenderingen misslyckades."
+    );
+  }
+
+  if (
+    !result.renderedMediaUrl
+  ) {
+    throw new Error(
+      "Renderingen lyckades men renderedMediaUrl saknas."
+    );
+  }
+
+  return result.renderedMediaUrl as string;
+}
+
   async function schedulePost(
-  imageUrl: string,
-  scheduledAt: Date
+  mediaUrl: string,
+  scheduledAt: Date,
+  mediaType: "image" | "video"
 ) {
   const platforms: string[] =
     [];
@@ -351,14 +462,15 @@ const [
         },
 
         body:
-          JSON.stringify({
-            influencerId,
-            imageUrl,
-            caption,
-            scheduledAt:
-              scheduledAt.toISOString(),
-            platforms,
-          }),
+  JSON.stringify({
+    influencerId,
+    mediaUrl,
+    mediaType,
+    caption,
+    scheduledAt:
+      scheduledAt.toISOString(),
+    platforms,
+  }),
       }
     );
 
@@ -445,8 +557,39 @@ const [
       "Laddar upp bilden..."
     );
 
-    const imageUrl =
-      await uploadImage();
+  let mediaUrl =
+  await uploadMedia();
+
+const mediaType:
+  "image" | "video" =
+  file.type.startsWith(
+    "video/"
+  )
+    ? "video"
+    : "image";
+
+/*
+  Om detta är en video med
+  overlaytext renderar vi först
+  en färdig MP4.
+
+  Därefter använder resten av
+  publiceringssystemet den
+  renderade videons URL.
+*/
+if (
+  mediaType === "video" &&
+  overlayText.trim()
+) {
+  setMessage(
+    "Renderar Reel med overlaytext..."
+  );
+
+  mediaUrl =
+    await renderVideo(
+      mediaUrl
+    );
+}
 
 /*
   PUBLICERA NU
@@ -499,11 +642,12 @@ if (
       Date.now() + 5000
     );
 
-  const scheduledResult =
-    await schedulePost(
-      imageUrl,
-      scheduledAt
-    );
+ const scheduledResult =
+  await schedulePost(
+    mediaUrl,
+    scheduledAt,
+    mediaType
+  );
 
   if (
     !scheduledResult.postId
@@ -567,7 +711,25 @@ if (
   );
 
   setFile(null);
-  setCaption("");
+setCaption("");
+setOverlayText("");
+setTextPosition(
+  "bottom"
+);
+setFontSize(48);
+setTextColor(
+  "white"
+);
+
+setSelectedMusicTrack(
+  null
+);
+setOriginalAudioVolume(
+  1
+);
+setMusicVolume(
+  0.7
+);
 
   return;
 }
@@ -623,11 +785,12 @@ if (
       )}...`
     );
 
-    const result =
-      await schedulePost(
-        imageUrl,
-        scheduledAt
-      );
+ const result =
+  await schedulePost(
+    mediaUrl,
+    scheduledAt,
+    mediaType
+  );
 
     setMessage(
       `Schemalagt för ${formatLocalDateTime(
@@ -639,8 +802,27 @@ if (
       )} ✓`
     );
 
-    setFile(null);
-    setCaption("");
+setFile(null);
+setCaption("");
+setOverlayText("");
+setTextPosition(
+  "bottom"
+);
+setFontSize(48);
+setTextColor(
+  "white"
+);
+
+setSelectedMusicTrack(
+  null
+);
+setOriginalAudioVolume(
+  1
+);
+setMusicVolume(
+  0.7
+);
+
   } catch (error) {
     setMessage(
       error instanceof Error
@@ -691,12 +873,12 @@ if (
 
           <div>
             <label className="mb-3 block font-medium">
-              Bild
+              Bild eller Reel
             </label>
 
             <input
               type="file"
-              accept="image/jpeg,image/png"
+              accept="image/jpeg,image/png,video/mp4,video/quicktime"
               disabled={
                 loading
               }
@@ -718,6 +900,56 @@ if (
                 {file.name}
               </p>
             )}
+
+{/* Media Editor */}
+
+{file && (
+  <MediaEditor
+    file={file}
+
+    overlayText={overlayText}
+    onOverlayTextChange={
+      setOverlayText
+    }
+
+    textPosition={textPosition}
+    onTextPositionChange={
+      setTextPosition
+    }
+
+    fontSize={fontSize}
+    onFontSizeChange={
+      setFontSize
+    }
+
+    textColor={textColor}
+    onTextColorChange={
+      setTextColor
+    }
+
+    selectedMusicTrack={
+      selectedMusicTrack
+    }
+    onSelectedMusicTrackChange={
+      setSelectedMusicTrack
+    }
+
+    originalAudioVolume={
+      originalAudioVolume
+    }
+    onOriginalAudioVolumeChange={
+      setOriginalAudioVolume
+    }
+
+    musicVolume={
+      musicVolume
+    }
+    onMusicVolumeChange={
+      setMusicVolume
+    }
+  />
+)}
+
           </div>
 
           {/* Caption */}
