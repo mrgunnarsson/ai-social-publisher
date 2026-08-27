@@ -16,6 +16,9 @@ type PlatformFilter = Platform | "all";
 type BaselineType =
   | "previous_daily_snapshot"
   | "tracking_started_today";
+type TodayCalculationType =
+  | "post_metric_history"
+  | "legacy_aggregate_baseline";
 
 type SyncFields = {
   last_synced_at: string | null;
@@ -87,6 +90,19 @@ type Totals = {
 
 type NullableTotals = {
   [Name in keyof Totals]: number | null;
+};
+
+type PostMetricTodayRow = {
+  period_start: string;
+  observed_targets: number | string;
+  first_captured_at: string | null;
+  views: number | string;
+  likes: number | string;
+  comments: number | string;
+  saves: number | string;
+  shares: number | string;
+  reach: number | string;
+  clicks: number | string;
 };
 
 function emptyTotals(): Totals {
@@ -297,6 +313,64 @@ function calculateTodayDelta(
   }
 
   return delta;
+}
+
+function historyMetric(value: number | string) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isHistorySchemaUnavailable(code: string | undefined) {
+  return (
+    code === "42P01" ||
+    code === "42883" ||
+    code === "PGRST202" ||
+    code === "PGRST205"
+  );
+}
+
+async function loadPostMetricToday(
+  influencerId: string,
+  platform: PlatformFilter,
+  stockholmDay: string,
+  now: Date
+) {
+  const { data, error } = await supabase.rpc("get_post_metric_today", {
+    p_influencer_id: influencerId,
+    p_platform: platform,
+    p_day: stockholmDay,
+    p_end_at: now.toISOString(),
+  });
+
+  if (error) {
+    if (isHistorySchemaUnavailable(error.code)) {
+      return null;
+    }
+
+    throw new Error(`Could not load post metric history: ${error.message}`);
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as PostMetricTodayRow | null;
+
+  if (!row || historyMetric(row.observed_targets) === 0) {
+    return null;
+  }
+
+  return {
+    calculationType: "post_metric_history" as TodayCalculationType,
+    periodStart: row.period_start,
+    firstCapturedAt: row.first_captured_at,
+    observedTargets: historyMetric(row.observed_targets),
+    totals: {
+      views: historyMetric(row.views),
+      likes: historyMetric(row.likes),
+      comments: historyMetric(row.comments),
+      saves: historyMetric(row.saves),
+      shares: historyMetric(row.shares),
+      reach: historyMetric(row.reach),
+      clicks: historyMetric(row.clicks),
+    } satisfies Totals,
+  };
 }
 
 async function loadLegacyInstagramRows(influencerId: string) {
@@ -537,6 +611,7 @@ async function loadCurrentAnalytics(
       },
       sync: {
         lastUpdatedAt: newestSync(syncTargets),
+        targetCount: syncTargets.length,
         syncingTargets,
         dueTargets,
         errorTargets,
@@ -581,9 +656,10 @@ export async function GET(request: Request) {
     const platform = platformParam;
     const now = new Date();
     const todayInStockholm = stockholmDateString(now);
-    const [current, previousBaseline] = await Promise.all([
+    const [current, previousBaseline, postMetricToday] = await Promise.all([
       loadCurrentAnalytics(influencerId, platform, now),
       loadBaselineRows(influencerId, platform, todayInStockholm),
+      loadPostMetricToday(influencerId, platform, todayInStockholm, now),
     ]);
     let baselineType: BaselineType | null = null;
     let baselineDate: string | null = null;
@@ -613,9 +689,17 @@ export async function GET(request: Request) {
       }
     }
 
-    const todayDelta = baselineTotals
+    const historyReady = Boolean(
+      postMetricToday &&
+        postMetricToday.observedTargets >= current.sync.targetCount
+    );
+    const legacyTodayDelta = baselineTotals
       ? calculateTodayDelta(current.totals, baselineTotals)
       : null;
+    const todayDelta = historyReady ? postMetricToday!.totals : legacyTodayDelta;
+    const calculationType: TodayCalculationType = historyReady
+      ? "post_metric_history"
+      : "legacy_aggregate_baseline";
 
     return NextResponse.json(
       {
@@ -625,11 +709,17 @@ export async function GET(request: Request) {
         generatedAt: now.toISOString(),
         totals: current.totals,
         today: {
-          available: baselineTotals !== null,
-          baselineType,
-          baselineDate,
-          baselineAt,
-          baselineTotals,
+          available: todayDelta !== null,
+          calculationType,
+          periodStart: historyReady ? postMetricToday!.periodStart : null,
+          observedTargets: postMetricToday?.observedTargets ?? null,
+          requiredTargets: current.sync.targetCount,
+          historyReady,
+          firstCapturedAt: postMetricToday?.firstCapturedAt ?? null,
+          baselineType: historyReady ? null : baselineType,
+          baselineDate: historyReady ? todayInStockholm : baselineDate,
+          baselineAt: historyReady ? postMetricToday!.periodStart : baselineAt,
+          baselineTotals: historyReady ? null : baselineTotals,
           views: todayDelta?.views ?? null,
           likes: todayDelta?.likes ?? null,
           comments: todayDelta?.comments ?? null,

@@ -90,19 +90,12 @@ async function createInstagramSnapshot(
   account: SocialAccount,
   statDate: string
 ) {
-  /*
-    Legacy Instagram-poster.
-  */
-  const {
-    data:
-      legacyPosts,
-    error:
-      legacyError,
-  } = await supabase
+  const { data: legacyPosts, error: legacyError } = await supabase
     .from("posts")
     .select(
       `
       id,
+      external_post_id,
       published_at,
       likes,
       comments,
@@ -112,214 +105,68 @@ async function createInstagramSnapshot(
       views
       `
     )
-    .eq(
-      "social_account_id",
-      account.id
-    )
-    .eq(
-      "platform",
-      "instagram"
-    )
-    .eq(
-      "status",
-      "published"
-    );
+    .eq("social_account_id", account.id)
+    .eq("platform", "instagram")
+    .eq("status", "published")
+    .not("external_post_id", "is", null);
 
   if (legacyError) {
-    throw new Error(
-      legacyError.message
-    );
+    throw new Error(legacyError.message);
   }
 
-  /*
-    Multi-platform-poster där
-    Instagram-destinationen är
-    publicerad.
-  */
-  const {
-    data:
-      destinations,
-    error:
-      destinationsError,
-  } = await supabase
-    .from(
-      "post_destinations"
-    )
+  const { data: destinations, error: destinationsError } = await supabase
+    .from("post_destinations")
     .select(
       `
       post_id,
-      published_at
+      external_post_id,
+      published_at,
+      likes,
+      comments,
+      saves,
+      shares,
+      reach,
+      views
       `
     )
-    .eq(
-      "social_account_id",
-      account.id
-    )
-    .eq(
-      "platform",
-      "instagram"
-    )
-    .eq(
-      "status",
-      "published"
-    );
+    .eq("social_account_id", account.id)
+    .eq("platform", "instagram")
+    .eq("status", "published")
+    .not("external_post_id", "is", null);
 
-  if (
-    destinationsError
-  ) {
-    throw new Error(
-      destinationsError.message
-    );
+  if (destinationsError) {
+    throw new Error(destinationsError.message);
   }
 
-  const postIds =
-    [
-      ...new Set(
-        (
-          destinations ??
-          []
-        ).map(
-          (item) =>
-            item.post_id
-        )
-      ),
-    ];
-
-  let multiPosts:
-    {
-      id: string;
-      likes: number;
-      comments: number;
-      saves: number;
-      shares: number;
-      reach: number;
-      views: number;
-    }[] =
-    [];
-
-  if (
-    postIds.length >
-    0
-  ) {
-    const {
-      data,
-      error,
-    } = await supabase
-      .from("posts")
-      .select(
-        `
-        id,
-        likes,
-        comments,
-        saves,
-        shares,
-        reach,
-        views
-        `
-      )
-      .in(
-        "id",
-        postIds
-      );
-
-    if (error) {
-      throw new Error(
-        error.message
-      );
-    }
-
-    multiPosts =
-      data ?? [];
-  }
-
-  const allPosts =
-    [
-      ...(legacyPosts ??
-        []),
-      ...multiPosts,
-    ];
-
-  const uniquePosts =
-    Array.from(
-      new Map(
-        allPosts.map(
-          (post) => [
-            post.id,
-            post,
-          ]
-        )
-      ).values()
-    );
-
-  const destinationPublishedToday =
-    (
-      destinations ??
-      []
-    ).filter(
-      (item) =>
-        isSameStockholmDate(
-          item.published_at,
-          statDate
-        )
-    ).length;
-
-  const legacyPublishedToday =
-    (
-      legacyPosts ??
-      []
-    ).filter(
-      (post) =>
-        isSameStockholmDate(
-          post.published_at,
-          statDate
-        )
-    ).length;
-
-  const totals =
-    uniquePosts.reduce(
-      (
-        sum,
-        post
-      ) => ({
-        likes:
-          sum.likes +
-          (post.likes ??
-            0),
-
-        comments:
-          sum.comments +
-          (post.comments ??
-            0),
-
-        saves:
-          sum.saves +
-          (post.saves ??
-            0),
-
-        shares:
-          sum.shares +
-          (post.shares ??
-            0),
-
-        reach:
-          sum.reach +
-          (post.reach ??
-            0),
-
-        views:
-          sum.views +
-          (post.views ??
-            0),
-      }),
-      {
-        likes: 0,
-        comments: 0,
-        saves: 0,
-        shares: 0,
-        reach: 0,
-        views: 0,
-      }
-    );
+  const destinationPostIds = new Set(
+    (destinations ?? []).map((destination) => destination.post_id)
+  );
+  const destinationExternalIds = new Set(
+    (destinations ?? []).map((destination) => destination.external_post_id)
+  );
+  const deduplicatedLegacyPosts = (legacyPosts ?? []).filter(
+    (post) =>
+      !destinationPostIds.has(post.id) &&
+      !destinationExternalIds.has(post.external_post_id)
+  );
+  const canonicalTargets = [
+    ...deduplicatedLegacyPosts,
+    ...(destinations ?? []),
+  ];
+  const totals = canonicalTargets.reduce(
+    (sum, target) => ({
+      likes: sum.likes + (target.likes ?? 0),
+      comments: sum.comments + (target.comments ?? 0),
+      saves: sum.saves + (target.saves ?? 0),
+      shares: sum.shares + (target.shares ?? 0),
+      reach: sum.reach + (target.reach ?? 0),
+      views: sum.views + (target.views ?? 0),
+    }),
+    { likes: 0, comments: 0, saves: 0, shares: 0, reach: 0, views: 0 }
+  );
+  const postsPublished = canonicalTargets.filter((target) =>
+    isSameStockholmDate(target.published_at, statDate)
+  ).length;
 
   return {
     influencer_id:
@@ -359,8 +206,7 @@ async function createInstagramSnapshot(
       totals.saves,
 
     posts_published:
-      destinationPublishedToday +
-      legacyPublishedToday,
+      postsPublished,
 
     updated_at:
       new Date()

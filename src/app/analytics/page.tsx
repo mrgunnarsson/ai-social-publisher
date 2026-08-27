@@ -118,6 +118,7 @@ type CurrentTotals = {
 
 type CurrentSync = {
   lastUpdatedAt: string | null;
+  targetCount: number;
   syncingTargets: number;
   dueTargets: number;
   errorTargets: number;
@@ -125,6 +126,14 @@ type CurrentSync = {
 
 type CurrentToday = CurrentTotals & {
   available: boolean;
+  calculationType:
+    | "post_metric_history"
+    | "legacy_aggregate_baseline";
+  periodStart: string | null;
+  observedTargets: number | null;
+  requiredTargets: number;
+  historyReady: boolean;
+  firstCapturedAt: string | null;
   baselineType:
     | "previous_daily_snapshot"
     | "tracking_started_today"
@@ -548,13 +557,16 @@ export default function AnalyticsPage() {
     : today;
   const todayDescription = hasSelectedInfluencer
     ? liveToday?.available &&
+      liveToday.calculationType === "post_metric_history"
+      ? "Live since 00:00."
+      : liveToday?.available &&
       liveToday.baselineType === "tracking_started_today" &&
       liveToday.baselineAt
-      ? `Since tracking started today at ${formatStockholmTime(liveToday.baselineAt)}.`
+      ? `Estimated since tracking started at ${formatStockholmTime(liveToday.baselineAt)}.`
       : liveToday?.available &&
           liveToday.baselineType === "previous_daily_snapshot" &&
           liveToday.baselineDate
-        ? `Since snapshot ${formatDate(liveToday.baselineDate)}.`
+        ? `Estimated since snapshot ${formatDate(liveToday.baselineDate)}; not an exact midnight total.`
         : "Today's change will be available after the first baseline is created."
     : "Förändring sedan föregående snapshot.";
 

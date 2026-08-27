@@ -656,6 +656,31 @@ function getTargetLabel(target: DueTarget) {
   return `${target.kind}:${target.id}`;
 }
 
+function hasMetric(metrics: MetricUpdates, name: keyof MetricUpdates) {
+  return Object.prototype.hasOwnProperty.call(metrics, name);
+}
+
+function metricPersistenceArgs(metrics: MetricUpdates) {
+  return {
+    p_has_views: hasMetric(metrics, "views"),
+    p_views: metrics.views ?? null,
+    p_has_likes: hasMetric(metrics, "likes"),
+    p_likes: metrics.likes ?? null,
+    p_has_reactions: hasMetric(metrics, "reactions"),
+    p_reactions: metrics.reactions ?? null,
+    p_has_comments: hasMetric(metrics, "comments"),
+    p_comments: metrics.comments ?? null,
+    p_has_saves: hasMetric(metrics, "saves"),
+    p_saves: metrics.saves ?? null,
+    p_has_shares: hasMetric(metrics, "shares"),
+    p_shares: metrics.shares ?? null,
+    p_has_reach: hasMetric(metrics, "reach"),
+    p_reach: metrics.reach ?? null,
+    p_has_clicks: hasMetric(metrics, "clicks"),
+    p_clicks: metrics.clicks ?? null,
+  };
+}
+
 function getTargetPriority(target: DueTarget, now: Date) {
   const publishedAt = target.published_at
     ? new Date(target.published_at).getTime()
@@ -1114,36 +1139,41 @@ async function finalizeSuccess(
     from: completedAt,
     jitterKey: `${getTargetLabel(target)}:success`,
   });
-  const { data, error } = await supabase
-    .from(getTargetTable(target))
-    .update({
-      ...metrics,
-      last_synced_at: completedAt.toISOString(),
-      last_sync_attempt_at: attemptedAt,
-      sync_count: (target.sync_count ?? 0) + 1,
-      sync_error_count: 0,
-      last_sync_error: null,
-      last_sync_error_at: null,
-      next_sync_at: nextSyncAt,
-      sync_claimed_at: null,
-      sync_claim_token: null,
-    })
-    .eq("id", target.id)
-    .eq("sync_claim_token", claimToken)
-    .select("id")
-    .maybeSingle();
+  const syncRunId = randomUUID();
+  const { data, error } = await supabase.rpc(
+    "persist_post_metric_observation",
+    {
+      p_target_type: target.kind,
+      p_target_id: target.id,
+      p_claim_token: claimToken,
+      p_outcome: "success",
+      p_attempted_at: attemptedAt,
+      p_observed_at: completedAt.toISOString(),
+      p_next_sync_at: nextSyncAt,
+      p_sync_run_id: syncRunId,
+      p_error_count: 0,
+      p_error_message: null,
+      ...metricPersistenceArgs(metrics),
+    }
+  );
 
   if (error) {
-    throw new Error(`Could not save successful sync: ${error.message}`);
+    throw new Error(
+      `Could not atomically save metrics and history: ${error.message}`
+    );
   }
 
-  if (!data) {
-    throw new Error("Sync claim was lost before the successful update.");
+  const persisted = Array.isArray(data) ? data[0] : data;
+
+  if (!persisted) {
+    throw new Error("Metric persistence returned no result.");
   }
 
   return {
     syncedAt: completedAt.toISOString(),
     nextSyncAt,
+    syncRunId,
+    snapshotInserted: Boolean(persisted.snapshot_inserted),
   };
 }
 
@@ -1170,30 +1200,35 @@ async function recordFailure(
     jitterKey: `${getTargetLabel(target)}:failure:${errorCount}`,
     retryAfterMs: syncError.retryAfterMs,
   });
-  const { data, error: updateError } = await supabase
-    .from(getTargetTable(target))
-    .update({
-      ...metricUpdates,
-      last_sync_attempt_at: attemptedAt,
-      sync_error_count: errorCount,
-      last_sync_error: sanitizedError,
-      last_sync_error_at: failedAt.toISOString(),
-      next_sync_at: nextSyncAt,
-      sync_claimed_at: null,
-      sync_claim_token: null,
-    })
-    .eq("id", target.id)
-    .eq("sync_claim_token", claimToken)
-    .select("id")
-    .maybeSingle();
+  const syncRunId = randomUUID();
+  const { data, error: updateError } = await supabase.rpc(
+    "persist_post_metric_observation",
+    {
+      p_target_type: target.kind,
+      p_target_id: target.id,
+      p_claim_token: claimToken,
+      p_outcome: "failure",
+      p_attempted_at: attemptedAt,
+      p_observed_at: failedAt.toISOString(),
+      p_next_sync_at: nextSyncAt,
+      p_sync_run_id: syncRunId,
+      p_error_count: errorCount,
+      p_error_message: sanitizedError,
+      ...metricPersistenceArgs(metricUpdates),
+    }
+  );
+  const persisted = Array.isArray(data) ? data[0] : data;
 
   return {
     failureKind: syncError.failureKind,
     error: sanitizedError,
     errorCount,
     nextSyncAt,
-    failureSaved: !updateError && Boolean(data),
-    persistenceError: updateError?.message ?? (!data ? "Sync claim was lost." : null),
+    syncRunId,
+    snapshotInserted: Boolean(persisted?.snapshot_inserted),
+    failureSaved: !updateError && Boolean(persisted),
+    persistenceError:
+      updateError?.message ?? (!persisted ? "Metric persistence returned no result." : null),
   };
 }
 
