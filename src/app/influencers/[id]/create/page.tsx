@@ -9,10 +9,15 @@ import {
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import MediaEditor, {
+  type OverlayPosition,
   type TextPosition,
   type TextColor,
   type MusicTrack,
 } from "@/components/post-editor/MediaEditor";
+import {
+  createCanonicalTextOverlay,
+  getPresetOverlayPosition,
+} from "@/lib/text-overlay";
 
 type Recommendation = {
   rank: number;
@@ -56,7 +61,7 @@ function getNextRecommendedDate(
   const currentWeekday =
     now.getDay();
 
-  let daysAhead =
+  const daysAhead =
     (weekday -
       currentWeekday +
       7) %
@@ -142,6 +147,15 @@ const [
   setTextPosition,
 ] = useState<TextPosition>(
   "bottom"
+);
+
+const [
+  overlayPosition,
+  setOverlayPosition,
+] = useState<OverlayPosition>(
+  getPresetOverlayPosition(
+    "bottom"
+  )
 );
 
 const [
@@ -397,6 +411,13 @@ influencerId,
   fontSize,
 
   textColor,
+
+  overlayLayout:
+    createCanonicalTextOverlay({
+      position:
+        overlayPosition,
+      fontSize,
+    }),
 
   musicUrl:
     selectedMusicTrack?.audio_url ??
@@ -723,6 +744,11 @@ setOverlayText("");
 setTextPosition(
   "bottom"
 );
+setOverlayPosition(
+  getPresetOverlayPosition(
+    "bottom"
+  )
+);
 setFontSize(48);
 setTextColor(
   "white"
@@ -818,6 +844,11 @@ setCaption("");
 setOverlayText("");
 setTextPosition(
   "bottom"
+);
+setOverlayPosition(
+  getPresetOverlayPosition(
+    "bottom"
+  )
 );
 setFontSize(48);
 setTextColor(
@@ -930,6 +961,13 @@ setMusicStartTime(
     textPosition={textPosition}
     onTextPositionChange={
       setTextPosition
+    }
+
+    overlayPosition={
+      overlayPosition
+    }
+    onOverlayPositionChange={
+      setOverlayPosition
     }
 
     fontSize={fontSize}

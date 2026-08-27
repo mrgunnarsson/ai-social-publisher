@@ -2,16 +2,31 @@
 
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 
 import { supabase } from "@/lib/supabase";
+import {
+  REEL_HEIGHT,
+  REEL_WIDTH,
+  buildTextOverlaySvg,
+  createCanonicalTextOverlay,
+  getPresetOverlayPosition,
+  layoutTextOverlay,
+  textOverlaySvgDataUrl,
+  type TextOverlayPosition,
+} from "@/lib/text-overlay";
 
 export type TextPosition =
   | "top"
   | "center"
-  | "bottom";
+  | "bottom"
+  | "custom";
+
+export type OverlayPosition =
+  TextOverlayPosition;
 
 export type TextColor =
   | "white"
@@ -41,6 +56,12 @@ type MediaEditorProps = {
 
   onTextPositionChange: (
     value: TextPosition
+  ) => void;
+
+  overlayPosition: OverlayPosition;
+
+  onOverlayPositionChange: (
+    value: OverlayPosition
   ) => void;
 
   fontSize: number;
@@ -81,9 +102,6 @@ onMusicStartTimeChange: (
 ) => void;
 };
 
-const REEL_WIDTH =
-  1080;
-
 const PREVIEW_REFERENCE_WIDTH =
   384;
 
@@ -97,6 +115,10 @@ export default function MediaEditor({
   textPosition,
 
   onTextPositionChange,
+
+  overlayPosition,
+
+  onOverlayPositionChange,
 
   fontSize,
 
@@ -163,33 +185,47 @@ onMusicStartTimeChange,
       null
     );
 
+  const previewCanvasRef =
+    useRef<HTMLDivElement | null>(
+      null
+    );
+
+  const dragRef =
+    useRef<{
+      pointerId: number;
+      clientX: number;
+      clientY: number;
+      position: OverlayPosition;
+    } | null>(null);
+
   const isVideo =
     file?.type.startsWith(
       "video/"
     ) ?? false;
 
   useEffect(() => {
-    if (!file) {
-      setPreviewUrl(
-        null
+    const url = file
+      ? URL.createObjectURL(
+          file
+        )
+      : null;
+    const frame =
+      requestAnimationFrame(
+        () => {
+          setPreviewUrl(url);
+        }
       );
-
-      return;
-    }
-
-    const url =
-      URL.createObjectURL(
-        file
-      );
-
-    setPreviewUrl(
-      url
-    );
 
     return () => {
-      URL.revokeObjectURL(
-        url
+      cancelAnimationFrame(
+        frame
       );
+
+      if (url) {
+        URL.revokeObjectURL(
+          url
+        );
+      }
     };
   }, [file]);
 
@@ -285,6 +321,43 @@ onMusicStartTimeChange,
       REEL_WIDTH
     );
 
+  const canonicalOverlay =
+    useMemo(
+      () =>
+        createCanonicalTextOverlay({
+          position: overlayPosition,
+          fontSize,
+        }),
+      [fontSize, overlayPosition]
+    );
+
+  const overlayLayout =
+    useMemo(
+      () =>
+        layoutTextOverlay(
+          overlayText,
+          canonicalOverlay
+        ),
+      [canonicalOverlay, overlayText]
+    );
+
+  const overlaySvgUrl =
+    useMemo(
+      () =>
+        textOverlaySvgDataUrl(
+          buildTextOverlaySvg({
+            text: overlayText,
+            overlay: canonicalOverlay,
+            color: textColor,
+          })
+        ),
+      [
+        canonicalOverlay,
+        overlayText,
+        textColor,
+      ]
+    );
+
   function getPositionStyle():
     React.CSSProperties {
     switch (
@@ -307,6 +380,7 @@ onMusicStartTimeChange,
         };
 
       case "bottom":
+      case "custom":
       default:
         return {
           top:
@@ -314,6 +388,97 @@ onMusicStartTimeChange,
           transform:
             "translateY(-50%)",
         };
+    }
+  }
+
+  function selectTextPosition(
+    position: Exclude<
+      TextPosition,
+      "custom"
+    >
+  ) {
+    onTextPositionChange(position);
+    onOverlayPositionChange(
+      getPresetOverlayPosition(position)
+    );
+  }
+
+  function startOverlayDrag(
+    event: React.PointerEvent<HTMLElement>
+  ) {
+    if (!isVideo) return;
+
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(
+      event.pointerId
+    );
+    dragRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      position: {
+        x: overlayLayout.centerX / REEL_WIDTH,
+        y: overlayLayout.centerY / REEL_HEIGHT,
+      },
+    };
+  }
+
+  function moveOverlay(
+    event: React.PointerEvent<HTMLElement>
+  ) {
+    const drag = dragRef.current;
+    const preview = previewCanvasRef.current;
+
+    if (
+      !drag ||
+      !preview ||
+      drag.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    const bounds =
+      preview.getBoundingClientRect();
+    const scaleX = bounds.width / REEL_WIDTH;
+    const scaleY = bounds.height / REEL_HEIGHT;
+    const candidatePosition = {
+      x:
+        (drag.position.x * REEL_WIDTH +
+          (event.clientX - drag.clientX) /
+            scaleX) /
+        REEL_WIDTH,
+      y:
+        (drag.position.y * REEL_HEIGHT +
+          (event.clientY - drag.clientY) /
+            scaleY) /
+        REEL_HEIGHT,
+    };
+    const candidateOverlay =
+      createCanonicalTextOverlay({
+        position: candidatePosition,
+        fontSize,
+      });
+    const clampedLayout =
+      layoutTextOverlay(
+        overlayText,
+        candidateOverlay
+      );
+
+    onTextPositionChange("custom");
+    onOverlayPositionChange({
+      x: clampedLayout.centerX / REEL_WIDTH,
+      y: clampedLayout.centerY / REEL_HEIGHT,
+    });
+  }
+
+  function stopOverlayDrag(
+    event: React.PointerEvent<HTMLElement>
+  ) {
+    if (
+      dragRef.current?.pointerId ===
+      event.pointerId
+    ) {
+      dragRef.current = null;
     }
   }
 
@@ -421,6 +586,7 @@ onMusicStartTimeChange,
       <div className="mx-auto w-full max-w-sm">
 
         <div
+          ref={previewCanvasRef}
           className={`relative w-full overflow-hidden rounded-2xl border border-zinc-800 bg-black ${
             isVideo
               ? "aspect-[9/16]"
@@ -456,7 +622,35 @@ onMusicStartTimeChange,
 
           {/* OVERLAY */}
 
-          {overlayText && (
+          {overlayText && isVideo && (
+            <>
+              <img
+                src={overlaySvgUrl}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="pointer-events-none absolute inset-0 z-10 h-full w-full select-none"
+              />
+
+              <button
+                type="button"
+                aria-label="Flytta overlaytext"
+                onPointerDown={startOverlayDrag}
+                onPointerMove={moveOverlay}
+                onPointerUp={stopOverlayDrag}
+                onPointerCancel={stopOverlayDrag}
+                className="absolute z-20 cursor-move touch-none"
+                style={{
+                  left: `${(overlayLayout.bounds.x / REEL_WIDTH) * 100}%`,
+                  top: `${(overlayLayout.bounds.y / REEL_HEIGHT) * 100}%`,
+                  width: `${(overlayLayout.bounds.width / REEL_WIDTH) * 100}%`,
+                  height: `${(overlayLayout.bounds.height / REEL_HEIGHT) * 100}%`,
+                }}
+              />
+            </>
+          )}
+
+          {overlayText && !isVideo && (
             <div
               className="pointer-events-none absolute left-[7%] right-[7%] z-10"
               style={
@@ -562,9 +756,7 @@ onMusicStartTimeChange,
                 "top"
               }
               onClick={() =>
-                onTextPositionChange(
-                  "top"
-                )
+                selectTextPosition("top")
               }
             />
 
@@ -575,9 +767,7 @@ onMusicStartTimeChange,
                 "center"
               }
               onClick={() =>
-                onTextPositionChange(
-                  "center"
-                )
+                selectTextPosition("center")
               }
             />
 
@@ -588,9 +778,7 @@ onMusicStartTimeChange,
                 "bottom"
               }
               onClick={() =>
-                onTextPositionChange(
-                  "bottom"
-                )
+                selectTextPosition("bottom")
               }
             />
 

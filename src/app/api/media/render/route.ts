@@ -14,6 +14,15 @@ import {
 
 import path from "path";
 import os from "os";
+import {
+  REEL_HEIGHT,
+  REEL_WIDTH,
+  buildTextOverlaySvg,
+  clamp,
+  resolveCanonicalTextOverlay,
+  type CanonicalTextOverlay,
+  type LegacyTextPosition,
+} from "@/lib/text-overlay";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -23,13 +32,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-const REEL_WIDTH = 1080;
-const REEL_HEIGHT = 1920;
-
 type TextPosition =
-  | "top"
-  | "center"
-  | "bottom";
+  | LegacyTextPosition
+  | "custom";
 
 type TextColor =
   | "white"
@@ -48,6 +53,9 @@ type RenderRequest = {
 
   textColor?: TextColor;
 
+  overlayLayout?:
+    Partial<CanonicalTextOverlay> | null;
+
   musicUrl?: string | null;
 
   originalAudioVolume?: number;
@@ -63,124 +71,6 @@ if (resolvedFfmpegPath) {
   ffmpeg.setFfmpegPath(
     resolvedFfmpegPath
   );
-}
-
-function clamp(
-  value: number,
-  min: number,
-  max: number
-) {
-  return Math.min(
-    max,
-    Math.max(
-      min,
-      value
-    )
-  );
-}
-
-function escapeXml(
-  value: string
-) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
-
-function getTextY(
-  position: TextPosition
-) {
-  if (
-    position === "top"
-  ) {
-    return Math.round(
-      REEL_HEIGHT * 0.16
-    );
-  }
-
-  if (
-    position === "center"
-  ) {
-    return Math.round(
-      REEL_HEIGHT * 0.5
-    );
-  }
-
-  return Math.round(
-    REEL_HEIGHT * 0.82
-  );
-}
-
-function buildOverlaySvg({
-  text,
-  position,
-  fontSize,
-  color,
-}: {
-  text: string;
-  position: TextPosition;
-  fontSize: number;
-  color: TextColor;
-}) {
-  const y =
-    getTextY(
-      position
-    );
-
-  const safeText =
-    escapeXml(text);
-
-  const previewReferenceWidth =
-    384;
-
-  const renderedFontSize =
-    Math.round(
-      fontSize *
-        (
-          REEL_WIDTH /
-          previewReferenceWidth
-        )
-    );
-
-  const strokeColor =
-    color === "white"
-      ? "rgba(0,0,0,0.85)"
-      : "rgba(255,255,255,0.7)";
-
-  return `
-    <svg
-      width="${REEL_WIDTH}"
-      height="${REEL_HEIGHT}"
-      viewBox="0 0 ${REEL_WIDTH} ${REEL_HEIGHT}"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <style>
-        .text {
-          font-family: Arial, Helvetica, sans-serif;
-          font-size: ${renderedFontSize}px;
-          font-weight: 700;
-          fill: ${color};
-          text-anchor: middle;
-          dominant-baseline: middle;
-          paint-order: stroke;
-          stroke: ${strokeColor};
-          stroke-width: 8px;
-          stroke-linejoin: round;
-        }
-      </style>
-
-      <text
-        x="${REEL_WIDTH / 2}"
-        y="${y}"
-        class="text"
-      >
-        ${safeText}
-      </text>
-    </svg>
-  `;
 }
 
 function probeInput(
@@ -473,6 +363,9 @@ export async function POST(
       textColor =
         "white",
 
+      overlayLayout =
+        null,
+
       musicUrl =
         null,
 
@@ -531,6 +424,7 @@ export async function POST(
         "top",
         "center",
         "bottom",
+        "custom",
       ].includes(
         textPosition
       )
@@ -575,6 +469,37 @@ export async function POST(
         20,
         96
       );
+
+    if (
+      textPosition ===
+        "custom" &&
+      overlayLayout?.version !==
+        2
+    ) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            "Custom text position requires overlayLayout version 2.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    const canonicalOverlay =
+      resolveCanonicalTextOverlay({
+        overlay:
+          overlayLayout,
+        legacyPosition:
+          textPosition ===
+          "custom"
+            ? "bottom"
+            : textPosition,
+        legacyFontSize:
+          safeFontSize,
+      });
 
     const safeOriginalAudioVolume =
       clamp(
@@ -690,15 +615,12 @@ export async function POST(
       hasOverlay
     ) {
       const svg =
-        buildOverlaySvg({
+        buildTextOverlaySvg({
           text:
             overlayText,
 
-          position:
-            textPosition,
-
-          fontSize:
-            safeFontSize,
+          overlay:
+            canonicalOverlay,
 
           color:
             textColor,
