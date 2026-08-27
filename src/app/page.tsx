@@ -244,6 +244,13 @@ export default function Home() {
               Schedule
             </a>
 
+            <a
+              href="/comments"
+              className="rounded-xl border border-zinc-800 bg-zinc-900 px-4 py-2 text-sm font-medium transition hover:bg-zinc-800"
+            >
+              Comments
+            </a>
+
           </div>
 
         </div>
